@@ -134,7 +134,13 @@ def _group_indicies(groups):
     return (gidx, grouplist)
 
 def _wilson_factorize(cpsd, fs, max_iter=500, tol=1e-9):
-    """Factorize CPSD into transfer matrix (H) and covariance (Sigma)"""
+    """Factorize CPSD into transfer matrix (H) and covariance (Sigma)
+
+    Implements the algorithm outlined in the following reference:
+    G. Tunnicliffe. Wilson, “The Factorization of Matricial Spectral
+    Densities,” SIAM J. Appl. Math., vol. 23, no. 4, pp. 420426, Dec.
+    1972, doi: 10.1137/0123044.
+    """
     psi = _init_psi(cpsd)
 
     pdb.set_trace()
