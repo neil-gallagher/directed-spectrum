@@ -14,9 +14,6 @@ from scipy.signal import csd
 from scipy.fft import fft, ifft
 from numpy.linalg import cholesky, solve
 
-# for debugging purposes !!!
-import matplotlib.pyplot as plt
-
 
 class DirectedSpectrum(object):
     """Represents directed spectrum and relevant labels.
@@ -36,6 +33,7 @@ class DirectedSpectrum(object):
         self.ds_array = ds_array
         self.f = f
         self.cgroups = cgroups
+
 
 def ds(X, fs, groups, pairwise=False, fres=None, window='hann', nperseg=None,
        noverlap=None):
@@ -90,7 +88,7 @@ def ds(X, fs, groups, pairwise=False, fres=None, window='hann', nperseg=None,
     dir_spec : DirectedSpectrum object
     """
     cpsd, f = _cpsd_mat(X, fs, fres, window, nperseg, noverlap)
-    # move frequency to first dimension
+    # move frequency to first dimension.
     cpsd = np.moveaxis(cpsd, 2, 0)
 
     gidx, grouplist = _group_indicies(groups)
@@ -100,10 +98,11 @@ def ds(X, fs, groups, pairwise=False, fres=None, window='hann', nperseg=None,
     if not pairwise:
         H, Sigma = _wilson_factorize(cpsd, fs)
     for gp in group_pairs:
+        # get indices of both groups in current pair.
         idx0 = np.array(gidx[gp[0]])
         idx1 = np.array(gidx[gp[1]])
         pair_idx = np.nonzero(idx0 | idx1)[0]
-        sub_idx1 = idx1[pair_idx]
+        sub_idx1 = idx1[pair_idx] # subset of pair_idx in group 1
         if pairwise:
             sub_cpsd = cpsd.take(pair_idx, axis=1).take(pair_idx, axis=2)
             H, Sigma = _wilson_factorize(sub_cpsd, fs)
@@ -112,10 +111,10 @@ def ds(X, fs, groups, pairwise=False, fres=None, window='hann', nperseg=None,
             sub_H = H.take(pair_idx, axis=1).take(pair_idx, axis=2)
             sub_Sigma = Sigma.take(pair_idx, axis=0).take(pair_idx, axis=1)
             ds01, ds10 = _var_to_ds(sub_H, sub_Sigma, sub_idx1)
-        # sum across channels within group
-        ds_array[:, gp[0], gp[1]] = np.linalg.det(ds01)
-        ds_array[:, gp[1], gp[0]] = np.linalg.det(ds10)
-
+        # average across channels within group.
+        # TODO: allow for other options besides average here
+        ds_array[:, gp[0], gp[1]] = np.diagonal(ds01, axis1=1, axis2=2).mean(axis=-1)
+        ds_array[:, gp[1], gp[0]] = np.diagonal(ds10, axis1=1, axis2=2).mean(axis=-1)
     return DirectedSpectrum(ds_array, f, grouplist)
 
 def _cpsd_mat(X, fs, fres, window, nperseg, noverlap):
