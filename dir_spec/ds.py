@@ -9,11 +9,11 @@ Public Function
 ds : Return a DirectedSpectrum object for multi-channel timeseries data.
 """
 from itertools import combinations
+from warnings import warn
 import numpy as np
 from scipy.signal import csd
 from scipy.fft import fft, ifft
 from numpy.linalg import cholesky, solve
-
 
 class DirectedSpectrum(object):
     """Represents directed spectrum and relevant labels.
@@ -120,6 +120,7 @@ def ds(X, fs, groups, pairwise=False, fres=None, window='hann', nperseg=None,
 def _cpsd_mat(X, fs, fres, window, nperseg, noverlap):
     """Return cross power spectral density and associated frequencies."""
     C, T = X.shape
+    # if frequency resolution is set, use it to determine fft length.
     if fres:
         nfft = int(fs/fres)
     elif nperseg:
@@ -127,13 +128,8 @@ def _cpsd_mat(X, fs, fres, window, nperseg, noverlap):
     else:
         nfft = 256
         nperseg = nfft
-    cpsd = np.zeros((C, C, nfft), dtype=np.cdouble)
-    for c1 in range(C):
-        for c2 in range(c1, C):
-            f, this_csd = csd(X[c1], X[c2], fs, window, nperseg, noverlap,
-                              nfft, return_onesided=False, scaling='density')
-            cpsd[c1, c2] = this_csd
-            cpsd[c2, c1] = this_csd.T.conj()
+    f, cpsd = csd(X, X[:,np.newaxis], fs, window, nperseg, noverlap,
+                  nfft, return_onesided=False, scaling='density')
     return (cpsd, f)
 
 def _group_indicies(groups):
@@ -143,76 +139,76 @@ def _group_indicies(groups):
     return (gidx, grouplist)
 
 def _wilson_factorize(cpsd, fs, max_iter=1000, tol=1e-9):
-    """Factorize CPSD into transfer matrix (H) and covariance (Sigma)
+    """Factorize CPSD into transfer matrix (H) and covariance (Sigma).
 
     Implements the algorithm outlined in the following reference:
     G. Tunnicliffe. Wilson, “The Factorization of Matricial Spectral
     Densities,” SIAM J. Appl. Math., vol. 23, no. 4, pp. 420426, Dec.
     1972, doi: 10.1137/0123044.
+
+    This code is based on an original implementation in MATLAB provided
+    by M. Dhamala (mdhamala@mail.phy-ast.gsu.edu).
     """
-    psi = _init_psi(cpsd)
+    psi, A0 = _init_psi(cpsd)
 
     # add small number to cpsd to prevent it from being negative
     # semidefinite due to rounding errors
     this_eps = np.spacing(np.abs(cpsd)).max()
     U = cholesky(cpsd + np.identity(cpsd.shape[-1])*2*this_eps)
-    from time import time
-    start = time()
     for k in range(max_iter):
-        # g = psi \ cpsd / psi* + I
+        # These lines implement: g = psi \ cpsd / psi* + I
         psi_inv_cpsd = solve(psi, U)
         g = psi_inv_cpsd @ psi_inv_cpsd.conj().transpose(0, 2, 1)
         g = g + np.identity(cpsd.shape[-1])
+        # TODO: compare these update steps to original Wilson algorithm.
+        #       also check if psi[0] should be upper triangular.
+        gplus, g0 = _plus_operator(g)
 
-        gplus = _plus_operator(g)
-        S = -np.tril(gplus[0], -1)
+        # S is chosen so that g0 + S is upper triangular; S + S* = 0
+        S = -np.tril(g0, -1)
         S = S - S.conj().transpose()
         gplus = gplus + S
         psi_prev = psi
         psi = psi @ gplus
-
-        converged = _check_convergence(psi, psi_prev, tol)
-        if converged:
-            print(f'converged! - {k:d} iters')
+        A0_prev = A0
+        A0 = A0 @ (g0 + S)
+        if (_check_convergence(psi, psi_prev, tol) and
+                _check_convergence(A0, A0_prev, tol)):
             break
-    print(f'{time()-start:.3f}s elapsed')
+        else:
+            warn('Wilson factorization failed to converge.', stacklevel=2)
 
-    A = ifft(psi, axis=0).real
-    Sigma = A[0] @ A[0].T # fs scaling?!?
-    H = (solve(A[0].T, psi.transpose(0, 2, 1))).transpose(0, 2, 1) # right-side solve
+    Sigma = (A0 @ A0.T) * fs
+    H = (solve(A0.T, psi.transpose(0, 2, 1))).transpose(0, 2, 1) # right-side solve
     return (H, Sigma)
 
 
 def _init_psi(cpsd):
     """Return initial psi value for wilson factorization."""
-    # try other init?
-    gamma = ifft(cpsd, axis=0) # set workers for parallelization?
+    # TODO: provide other initialization options; test which is best.
+    gamma = ifft(cpsd, axis=0)
     gamma0 = np.asmatrix(gamma[0])
-    # remove assymetry due to rounding error
+    # remove assymetry in gamma0 due to rounding error.
     gamma0 = np.real((gamma0+gamma0.H)/2)
     h = np.asarray(cholesky(gamma0).H)
     psi = np.tile(h[np.newaxis], (gamma.shape[0], 1, 1))
-    return psi
+    return psi, h
 
 def _plus_operator(g):
     """Remove all negative lag components from time-domain representation"""
-    # remove imaginary components due to rounding error
+    # remove imaginary components from ifft due to rounding error.
     gamma = ifft(g, axis=0).real
-
     # take half of 0 lag
     gamma[0] *= 0.5
-
     # take half of nyquist component if fft had even # of points
     F = gamma.shape[0]
     N = int(np.floor(F/2))
     if F % 2 == 0:
         gamma[N] *= 0.5
-
     # zero out negative frequencies
     gamma[N+1:] = 0
-
     gp = fft(gamma, axis=0)
-    return gp
+    return gp, gamma[0]
 
 def _check_convergence(x, x0, tol):
     """Determine whether maximum change is lower than tolerance."""
@@ -222,8 +218,10 @@ def _check_convergence(x, x0, tol):
 
 def _var_to_ds(H, Sigma, idx1):
     """Calculate directed spectrum."""
+    # convert to indices from boolean
     idx0 = np.nonzero(~idx1)[0]
     idx1 = np.nonzero(idx1)[0]
+
     H01 = H.take(idx0, axis=1).take(idx1, axis=2)
     H10 = H.take(idx1, axis=1).take(idx0, axis=2)
     sig00 = Sigma.take(idx0, axis=0).take(idx0, axis=1)
