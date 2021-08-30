@@ -13,7 +13,7 @@ from warnings import warn
 import numpy as np
 from scipy.signal import csd
 from scipy.fft import fft, ifft
-from numpy.linalg import cholesky, solve
+from numpy.linalg import cholesky, solve, eigh
 
 class DirectedSpectrum(object):
     """Represents directed spectrum and relevant labels.
@@ -155,17 +155,16 @@ def _wilson_factorize(cpsd, fs, max_iter=1000, tol=1e-9):
     """
     psi, A0 = _init_psi(cpsd)
 
-    # add small number to cpsd to prevent it from being negative
-    # semidefinite due to rounding errors
-    this_eps = np.spacing(np.abs(cpsd)).max()
-    U = cholesky(cpsd + np.identity(cpsd.shape[-1])*2*this_eps)
+    w, v = eigh(cpsd)
+    w[w<0] = 0 # fix negative eigvals due to precision error
+    L = np.sqrt(w[...,np.newaxis,:]) * v
 
     H = np.zeros_like(psi)
     Sigma = np.zeros_like(A0)
     for w in range(cpsd.shape[0]):
         for k in range(max_iter):
             # These lines implement: g = psi \ cpsd / psi* + I
-            psi_inv_cpsd = solve (psi[w], U[w])
+            psi_inv_cpsd = solve (psi[w], L[w])
             g = psi_inv_cpsd @ psi_inv_cpsd.conj().transpose(0, 2, 1)
             g = g + np.identity(cpsd.shape[-1])
             # TODO: compare these update steps to original Wilson algorithm.
