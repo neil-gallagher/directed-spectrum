@@ -30,7 +30,7 @@ class DirectedSpectrum(object):
     """
 
     def __init__(self, ds_array, f, cgroups):
-        self.ds_array = ds_array
+        self.ds_array = np.array(ds_array, dtype=np.float64)
         self.f = f
         self.cgroups = cgroups
 
@@ -94,7 +94,7 @@ def ds(X, fs, groups, pairwise=False, fres=None, window='hann', nperseg=None,
     # move frequency to second dimension.
     cpsd = np.moveaxis(cpsd, 3, 1)
 
-    ds_array = np.zeros_like(cpsd)
+    ds_array = np.zeros_like(cpsd, dtype=np.float64)
     gidx, grouplist = _group_indicies(groups)
     group_pairs = combinations(range(len(gidx)), 2)
 
