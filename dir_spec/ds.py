@@ -134,6 +134,8 @@ def _cpsd_mat(X, fs, fres, window, nperseg, noverlap):
         nperseg = nfft
     f, cpsd = csd(X[:,:,np.newaxis], X[:,np.newaxis], fs, window, nperseg,
                   noverlap, nfft, return_onesided=False, scaling='density')
+    # transpose area axes ??? check that this is right
+    cpsd = cpsd.transpose(0,2,1,3)
     return (cpsd, f)
 
 def _group_indicies(groups):
@@ -155,16 +157,17 @@ def _wilson_factorize(cpsd, fs, max_iter=1000, tol=1e-9):
     """
     psi, A0 = _init_psi(cpsd)
 
-    w, v = eigh(cpsd)
-    w[w<0] = 0 # fix negative eigvals due to precision error
-    L = np.sqrt(w[...,np.newaxis,:]) * v
+    eigval, v = eigh(cpsd)
+    eigval[eigval<0] = 0 # fix negative eigvals due to precision error
+    L = np.sqrt(eigval[...,np.newaxis,:]) * v
 
     H = np.zeros_like(psi)
     Sigma = np.zeros_like(A0)
     for w in range(cpsd.shape[0]):
         for k in range(max_iter):
             # These lines implement: g = psi \ cpsd / psi* + I
-            psi_inv_cpsd = solve (psi[w], L[w])
+            #psi_inv_cpsd = solve (psi[w], L[w]) ???
+            psi_inv_cpsd = solve (psi[w], L[w].conj().transpose(0, 2, 1))
             g = psi_inv_cpsd @ psi_inv_cpsd.conj().transpose(0, 2, 1)
             g = g + np.identity(cpsd.shape[-1])
             # TODO: compare these update steps to original Wilson algorithm.
@@ -175,10 +178,12 @@ def _wilson_factorize(cpsd, fs, max_iter=1000, tol=1e-9):
             S = -np.tril(g0, -1)
             S = S - S.conj().transpose()
             gplus = gplus + S
-            psi_prev = psi[w]
+            psi_prev = psi[w].copy()
             psi[w] = psi[w] @ gplus
-            A0_prev = A0[w]
+            A0_prev = A0[w].copy()
             A0[w] = A0[w] @ (g0 + S)
+            if k == 19:
+                import pdb; pdb.set_trace()
             if (_check_convergence(psi[w], psi_prev, tol) and
                     _check_convergence(A0[w], A0_prev, tol)):
                 break
@@ -186,6 +191,7 @@ def _wilson_factorize(cpsd, fs, max_iter=1000, tol=1e-9):
                 warn('Wilson factorization failed to converge.', stacklevel=2)
 
         # right-side solve
+        import pdb; pdb.set_trace()
         H[w] = (solve(A0[w].T, psi[w].transpose(0, 2, 1))).transpose(0, 2, 1) 
         Sigma[w] = (A0[w] @ A0[w].T) * fs
     return (H, Sigma)
@@ -194,7 +200,8 @@ def _wilson_factorize(cpsd, fs, max_iter=1000, tol=1e-9):
 def _init_psi(cpsd):
     """Return initial psi value for wilson factorization."""
     # TODO: provide other initialization options; test which is best.
-    gamma = ifft(cpsd, axis=1)
+#    gamma = ifft(cpsd, axis=1) ???
+    gamma = fft(cpsd, axis=1)
     gamma0 = gamma[:, 0]
 
     # remove assymetry in gamma0 due to rounding error.
@@ -220,9 +227,13 @@ def _plus_operator(g):
     return gp, gamma[0]
 
 def _check_convergence(x, x0, tol):
-    """Determine whether maximum change is lower than tolerance."""
+    """Determine whether maximum relative change is lower than tolerance."""
     x_diff = np.abs(x - x0)
-    converged = x_diff.max() < tol
+    ab_x = np.abs(x)
+    this_eps = np.finfo(ab_x.dtype).eps
+    ab_x[ab_x <= 2*this_eps] = 1
+    rel_diff = x_diff / ab_x
+    converged = rel_diff.max() < tol
     return converged
 
 def _var_to_ds(H, Sigma, idx1):
