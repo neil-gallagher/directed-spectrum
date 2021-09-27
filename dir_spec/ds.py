@@ -157,17 +157,15 @@ def _wilson_factorize(cpsd, fs, max_iter=1000, tol=1e-9):
     """
     psi, A0 = _init_psi(cpsd)
 
-    eigval, v = eigh(cpsd)
-    eigval[eigval<0] = 0 # fix negative eigvals due to precision error
-    L = np.sqrt(eigval[...,np.newaxis,:]) * v
+    eigval, eigvec = eigh(cpsd)
+    L = np.sqrt(eigval[...,np.newaxis,:]) * eigvec
 
     H = np.zeros_like(psi)
     Sigma = np.zeros_like(A0)
     for w in range(cpsd.shape[0]):
         for k in range(max_iter):
             # These lines implement: g = psi \ cpsd / psi* + I
-            #psi_inv_cpsd = solve (psi[w], L[w]) ???
-            psi_inv_cpsd = solve (psi[w], L[w].conj().transpose(0, 2, 1))
+            psi_inv_cpsd = solve (psi[w], L[w])
             g = psi_inv_cpsd @ psi_inv_cpsd.conj().transpose(0, 2, 1)
             g = g + np.identity(cpsd.shape[-1])
             # TODO: compare these update steps to original Wilson algorithm.
@@ -182,8 +180,6 @@ def _wilson_factorize(cpsd, fs, max_iter=1000, tol=1e-9):
             psi[w] = psi[w] @ gplus
             A0_prev = A0[w].copy()
             A0[w] = A0[w] @ (g0 + S)
-            if k == 19:
-                import pdb; pdb.set_trace()
             if (_check_convergence(psi[w], psi_prev, tol) and
                     _check_convergence(A0[w], A0_prev, tol)):
                 break
@@ -191,7 +187,6 @@ def _wilson_factorize(cpsd, fs, max_iter=1000, tol=1e-9):
                 warn('Wilson factorization failed to converge.', stacklevel=2)
 
         # right-side solve
-        import pdb; pdb.set_trace()
         H[w] = (solve(A0[w].T, psi[w].transpose(0, 2, 1))).transpose(0, 2, 1) 
         Sigma[w] = (A0[w] @ A0[w].T) * fs
     return (H, Sigma)
