@@ -158,6 +158,7 @@ def _wilson_factorize(cpsd, fs, max_iter=1000, tol=1e-9):
     psi, A0 = _init_psi(cpsd)
 
     eigval, eigvec = eigh(cpsd)
+    eigval[eigval<0] = 0
     L = np.sqrt(eigval[...,np.newaxis,:]) * eigvec
 
     H = np.zeros_like(psi)
@@ -183,8 +184,8 @@ def _wilson_factorize(cpsd, fs, max_iter=1000, tol=1e-9):
             if (_check_convergence(psi[w], psi_prev, tol) and
                     _check_convergence(A0[w], A0_prev, tol)):
                 break
-            else:
-                warn('Wilson factorization failed to converge.', stacklevel=2)
+        else:
+            warn('Wilson factorization failed to converge.', stacklevel=2)
 
         # right-side solve
         H[w] = (solve(A0[w].T, psi[w].transpose(0, 2, 1))).transpose(0, 2, 1) 
