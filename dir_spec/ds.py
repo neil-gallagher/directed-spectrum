@@ -1,4 +1,4 @@
-"""Directed spectrum class and estimator function.
+"""Directed spectrum class and feature estimator function.
 
 Class
 -----
@@ -7,35 +7,44 @@ DirectedSpectrum : Represents directed spectrum and relevant labels.
 Public Function
 ---------------
 ds : Return a DirectedSpectrum object for multi-channel timeseries data.
+
+Author:  Neil Gallagher
+Modified by:  Billy Carson
+Date written:    8-27-2021
+Last modified:  11-4-2021
 """
 from itertools import combinations
 from warnings import warn
 import numpy as np
-from scipy.signal import csd
+from scipy.signal import csd, boxcar
 from scipy.fft import fft, ifft
 from numpy.linalg import cholesky, solve, eigh
 
 class DirectedSpectrum(object):
-    """Represents directed spectrum and relevant labels.
+    r"""Directed Spectrum object definition.
 
     Attributes
     ----------
-    ds_array : ndarray, shape (n_windows, n_frequencies, n_groups, n_groups)
-        Directed spectrum values between each pair of channel
-        groups for each frequency.
-    f : ndarray, shape (n_frequencies)
+    ds_array : ndarray
+        shape (n_windows, n_frequencies, n_groups, n_groups)
+        Array of Directed Spectrum features.
+    f : ndarray
+        shape (n_frequencies)
         Frequencies associated with the last dimension of ds_array.
-    cgroups : ndarray of strings, shape (n_groups)
-        Names the channel groups associated with ds_array.
+    groups : ndarray of strings
+        shape (n_groups)
+        Array of strings corresponding to names the channel groups associated with
+        ds_array.
     """
 
-    def __init__(self, ds_array, f, cgroups):
+    def __init__(self, ds_array, f, groups):
+        # Assign attributes
         self.ds_array = np.array(ds_array, dtype=np.float64)
         self.f = f
-        self.cgroups = cgroups
+        self.groups = groups
 
 
-def ds(X, fs, groups, pairwise=False, fres=None, window='hann', nperseg=None,
+def ds(X, f_samp, groups, pairwise=False, f_res=None, window=boxcar(200), nperseg=None,
        noverlap=None):
     """Returns a DirectedSpectrum object calculated from data X.
 
@@ -50,7 +59,7 @@ def ds(X, fs, groups, pairwise=False, fres=None, window='hann', nperseg=None,
         Timeseries data from multiple channels. It is assumed that the
         data for each channel are approximately stationary within a window.
         If a 2-D array is input, it is assumed that n_windows is 1.
-    fs : float
+    f_samp : float
         Sampling rate associated with X.
     groups : list of strings, shape (n_channels)
         Names the group associated with each channel. The directed
@@ -61,11 +70,11 @@ def ds(X, fs, groups, pairwise=False, fres=None, window='hann', nperseg=None,
         If 'True', calculate the pairwise directed spectrum
         (i.e. calculate seperately for each pair). Otherwise, the
         non-pairwise directed spectrum will be calculated.
-    fres : float, optional
+    f_res : float, optional
         Frequency resolution of the calculated spectrum. For example, if
         set to 1, then the directed spectrum will be calculated for
         integer frequency values. If set to 'None' (the default), then
-        the frequency resolution will be fs/nperseg.
+        the frequency resolution will be f_samp/nperseg.
     [Documentation for the following variables was copied from the
         scipy.signal.spectral module. These variables are used for
         calculating the cross power spectral density matrix.]
@@ -90,7 +99,7 @@ def ds(X, fs, groups, pairwise=False, fres=None, window='hann', nperseg=None,
     """
     if X.ndim == 2:
         X = X[np.newaxis]
-    cpsd, f = _cpsd_mat(X, fs, fres, window, nperseg, noverlap)
+    cpsd, f = _cpsd_mat(X, f_samp, f_res, window, nperseg, noverlap)
     # move frequency to second dimension.
     cpsd = np.moveaxis(cpsd, 3, 1)
 
@@ -99,7 +108,7 @@ def ds(X, fs, groups, pairwise=False, fres=None, window='hann', nperseg=None,
     group_pairs = combinations(range(len(gidx)), 2)
 
     if not pairwise:
-        H, Sigma = _wilson_factorize(cpsd, fs)
+        H, Sigma = _wilson_factorize(cpsd, f_samp)
     for gp in group_pairs:
         # get indices of both groups in current pair.
         idx0 = np.array(gidx[gp[0]])
@@ -108,7 +117,7 @@ def ds(X, fs, groups, pairwise=False, fres=None, window='hann', nperseg=None,
         sub_idx1 = idx1[pair_idx] # subset of pair_idx in group 1
         if pairwise:
             sub_cpsd = cpsd.take(pair_idx, axis=-2).take(pair_idx, axis=-1)
-            H, Sigma = _wilson_factorize(sub_cpsd, fs)
+            H, Sigma = _wilson_factorize(sub_cpsd, f_samp)
             ds01, ds10 = _var_to_ds(H, Sigma, sub_idx1)
         else:
             sub_H = H.take(pair_idx, axis=-2).take(pair_idx, axis=-1)
@@ -122,17 +131,17 @@ def ds(X, fs, groups, pairwise=False, fres=None, window='hann', nperseg=None,
             np.diagonal(ds10, axis1=-2, axis2=-1).mean(axis=-1)
     return DirectedSpectrum(ds_array, f, grouplist)
 
-def _cpsd_mat(X, fs, fres, window, nperseg, noverlap):
+def _cpsd_mat(X, f_samp, f_res, window, nperseg, noverlap):
     """Return cross power spectral density and associated frequencies."""
     # if frequency resolution is set, use it to determine fft length.
-    if fres:
-        nfft = int(fs/fres)
+    if f_res:
+        nfft = int(f_samp/f_res)
     elif nperseg:
         nfft = int(nperseg)
     else:
         nfft = 256
         nperseg = nfft
-    f, cpsd = csd(X[:,:,np.newaxis], X[:,np.newaxis], fs, window, nperseg,
+    f, cpsd = csd(X[:,:,np.newaxis], X[:,np.newaxis], f_samp, window, nperseg,
                   noverlap, nfft, return_onesided=False, scaling='density')
     # transpose area axes ??? check that this is right
     cpsd = cpsd.transpose(0,2,1,3)
@@ -144,7 +153,7 @@ def _group_indicies(groups):
     gidx = [[g1==g2 for g1 in groups] for g2 in grouplist]
     return (gidx, grouplist)
 
-def _wilson_factorize(cpsd, fs, max_iter=1000, tol=1e-9):
+def _wilson_factorize(cpsd, f_samp, max_iter=1000, tol=1e-6, eps_multiplier=100):
     """Factorize CPSD into transfer matrix (H) and covariance (Sigma).
 
     Implements the algorithm outlined in the following reference:
@@ -157,9 +166,13 @@ def _wilson_factorize(cpsd, fs, max_iter=1000, tol=1e-9):
     """
     psi, A0 = _init_psi(cpsd)
 
-    eigval, eigvec = eigh(cpsd)
-    eigval[eigval<0] = 0
-    L = np.sqrt(eigval[...,np.newaxis,:]) * eigvec
+    # add small number to cpsd to prevent it from being negative
+    # semidefinite due to rounding errors
+    this_eps = np.spacing(np.abs(cpsd)).max()
+    L = cholesky(cpsd + np.eye(cpsd.shape[-1])*this_eps*eps_multiplier)
+    #eigval, eigvec = eigh(cpsd)
+    #eigval[eigval<0] = 0
+    #L = np.sqrt(eigval[...,np.newaxis,:]) * eigvec
 
     H = np.zeros_like(psi)
     Sigma = np.zeros_like(A0)
@@ -189,7 +202,7 @@ def _wilson_factorize(cpsd, fs, max_iter=1000, tol=1e-9):
 
         # right-side solve
         H[w] = (solve(A0[w].T, psi[w].transpose(0, 2, 1))).transpose(0, 2, 1) 
-        Sigma[w] = (A0[w] @ A0[w].T) * fs
+        Sigma[w] = (A0[w] @ A0[w].T) * f_samp
     return (H, Sigma)
 
 
