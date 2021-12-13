@@ -43,6 +43,8 @@ ds(X, f_samp, groups=None, pairwise=False, f_res=None, max_iter=1000,
         If 'True', calculate the pairwise directed spectrum
         (i.e. calculate seperately for each pair of groups/channels).
         Otherwise, the non-pairwise directed spectrum will be calculated.
+        Note the pairwise directed spectrum is not calculated for elements
+        where the source and target are the same.
 * `f_res` : float, optional  
         Frequency resolution of the calculated spectrum. For example, if
         set to 1, then the directed spectrum will be calculated for

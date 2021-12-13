@@ -11,7 +11,7 @@ ds : Return a DirectedSpectrum object for multi-channel timeseries data.
 Author:  Neil Gallagher
 Modified by:  Billy Carson
 Date written:    8-27-2021
-Last modified:  11-4-2021
+Last modified:  12-13-2021
 """
 from itertools import combinations
 from warnings import warn
@@ -27,14 +27,21 @@ class DirectedSpectrum(object):
     ----------
     ds_array : ndarray
         shape (n_windows, n_frequencies, n_groups, n_groups)
-        Array of Directed Spectrum features.
+        Directed spectrum values between each pair of channels/groups
+        for each frequency and window. Axis 2 corresponds to the source
+        channel/group and axis 3 corresponds to the target channel/group.
+        For pairwise directed spectrum, elements for which target and source
+        are the same are not defined and are returned as NaNs. For 'full'
+        models, elements for which the target and source are the same
+        correspond to the self-directed spectrum, representing all signal
+        in that region that is not explained by any of the other sources in
+        the model.
     f : ndarray
         shape (n_frequencies)
-        Frequencies associated with the last dimension of ds_array.
+        Frequencies associated with axis 1 of ds_array.
     groups : ndarray of strings
         shape (n_groups)
-        Array of strings corresponding to names the channel groups associated with
-        ds_array.
+        Names the channels/groups associated with ds_array.
     """
 
     def __init__(self, ds_array, f, groups):
@@ -62,23 +69,28 @@ def ds(X, f_samp, groups=None, pairwise=False, f_res=None, max_iter=1000,
         If a 2-D array is input, it is assumed that n_windows is 1.
     f_samp : float
         Sampling rate associated with X.
-    groups : list of strings
+    groups : list of strings, optional
         shape (n_channels)
-        Names the group associated with each channel. The directed
-        spectrum is calculated between each pair of groups. To calculate
-        the directed spectrum between each pair of channels, this should
-        be a list of channel names.
+        To calculate the Directed Spectrum between groups of channels, this
+        should list the group associated with each channel. Otherwise, to
+        calculate the directed spectrum between each pair of channels, this
+        should be a list of channel names. If 'None' (default), then each
+        channel will be given a unique integer index.
     pairwise : bool, optional
         If 'True', calculate the pairwise directed spectrum
-        (i.e. calculate seperately for each pair). Otherwise, the
-        non-pairwise directed spectrum will be calculated.
+        (i.e. calculate seperately for each pair of groups/channels).
+        Otherwise, the non-pairwise directed spectrum will be calculated.
+        Note the pairwise directed spectrum is not calculated for elements
+        where the source and target are the same.
     f_res : float, optional
         Frequency resolution of the calculated spectrum. For example, if
         set to 1, then the directed spectrum will be calculated for
         integer frequency values. If set to 'None' (default), then
         the frequency resolution will be f_samp/nperseg.
     max_iter : int
-        Max number of Wilson factorization iterations.
+        Max number of Wilson factorization iterations. If factorization
+        does not converge before reaching this value, directed spectrum
+        estimates may be inaccurate.
     tol : float
         Wilson factorization convergence tolerance value.
     [Documentation for the following variables was copied from the
@@ -103,7 +115,7 @@ def ds(X, f_samp, groups=None, pairwise=False, f_res=None, max_iter=1000,
     -------
     dir_spec : DirectedSpectrum object
     """
-    
+
     # Check if time series array has appropriate number of dimensions/axes
     # Raise error if time series data does not have enough dimensions
     if X.ndim == 2:
@@ -120,27 +132,29 @@ def ds(X, f_samp, groups=None, pairwise=False, f_res=None, max_iter=1000,
     # move frequency to second dimension.
     cpsd = np.moveaxis(cpsd, 3, 1)
 
-    ds_array = np.zeros_like(cpsd, dtype=np.float64)
-
     # Get lists of unique channel groups and associated indices
     group_idx, group_list = _group_indicies(groups)
-    group_pairs = combinations(range(len(group_idx)), 2)
+    G = len(group_list)
+    group_pairs = combinations(range(G), 2)
+
+    ds_arr_shape = cpsd.shape[:2] + (G, G)
+    ds_array = np.full(ds_arr_shape, np.nan, dtype=np.float64)
 
     if not pairwise:
         H, Sigma = _wilson_factorize(cpsd, f_samp, max_iter, tol)
-        
+
     for gp in group_pairs:
         # get indices of both groups in current pair.
         idx0 = np.array(group_idx[gp[0]])
         idx1 = np.array(group_idx[gp[1]])
         pair_idx = np.nonzero(idx0 | idx1)[0]
         sub_idx1 = idx1[pair_idx] # subset of pair_idx in group 1
-        
+
         if pairwise:
             # Get cross power spectral density matrix corresponding to
             # indices of selected pairs.
             sub_cpsd = cpsd.take(pair_idx, axis=-2).take(pair_idx, axis=-1)
-            
+
             # Factorize cross power spectral density matrix into transfer
             # matrix (H) and covariance (Sigma).
             H, Sigma = _wilson_factorize(sub_cpsd, f_samp, max_iter, tol)
@@ -151,11 +165,30 @@ def ds(X, f_samp, groups=None, pairwise=False, f_res=None, max_iter=1000,
             ds01, ds10 = _var_to_ds(sub_H, sub_Sigma, sub_idx1)
 
         # Average across channels within group.
-        # TODO: allow for other options besides average here
+        # TODO: allow for other options besides average here.
         ds_array[:,:, gp[0], gp[1]] = \
             np.diagonal(ds01, axis1=-2, axis2=-1).mean(axis=-1)
         ds_array[:,:, gp[1], gp[0]] = \
             np.diagonal(ds10, axis1=-2, axis2=-1).mean(axis=-1)
+
+    if not pairwise:
+        # fill in elements where source equals target with
+        # self-directed spectrum
+        # = Sum_c(H_gc Sigma_cg) Sigma_gg^-1 Sum_b(H_gb Sigma_bg)*
+        for g, g_mask in enumerate(group_idx):
+            this_H = H[:,:, g_mask]
+            this_Sigma =  Sigma[:, np.newaxis, :, g_mask]
+            HSig = this_H @ this_Sigma
+            HSig_star = HSig.conj().transpose((0,1,3,2))
+            g_idx = np.nonzero(g_mask)[0][:,np.newaxis]
+            Sigma_gg = Sigma[..., np.newaxis, g_idx, g_idx.T]
+            ds_gg =  HSig @ solve(Sigma_gg, HSig_star)
+
+            # TODO: allow for other options matching ds calculation above
+            # Diagonal elements should be real, so ignore imaginary portion
+            ds_array[..., g, g] = \
+                np.diagonal(np.real(ds_gg), axis1=-2, axis2=-1).mean(axis=-1)
+
     return DirectedSpectrum(ds_array, f, group_list)
 
 def _cpsd_mat(X, f_samp, f_res, window, nperseg, noverlap):
@@ -174,8 +207,8 @@ def _cpsd_mat(X, f_samp, f_res, window, nperseg, noverlap):
     f_res : float
         Frequency resolution of the calculated spectrum. For example, if
         set to 1, then the Directed Spectrum will be calculated for integer
-        frequency values. If set to 'None' (default), then the frequency
-        resolution will be f_samp/nperseg.
+        frequency values. If set to 'None' (default), then nperseg must not
+        be 'None' and the frequency resolution will be f_samp/nperseg.
     [Documentation for the following variables was copied and modified from
         the scipy.signal.spectral module. These variables are used for
         calculating the cross power spectral density matrix.]
@@ -206,7 +239,7 @@ def _cpsd_mat(X, f_samp, f_res, window, nperseg, noverlap):
     elif nperseg:
         nfft = int(nperseg)
     else:
-        raise ValueError('Either n_times or both f_samp and f_res must be provided.')
+        raise ValueError('Either nperseg or f_res must be provided.')
 
     f, cpsd = csd(X[:,:,np.newaxis], X[:,np.newaxis], f_samp, window, nperseg,
                   noverlap, nfft, return_onesided=False, scaling='density')
