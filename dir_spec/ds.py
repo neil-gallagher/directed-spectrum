@@ -11,7 +11,7 @@ ds : Return a DirectedSpectrum object for multi-channel timeseries data.
 Author:  Neil Gallagher
 Modified by:  Billy Carson
 Date written:    8-27-2021
-Last modified:  12-13-2021
+Last modified:  12-14-2021
 """
 from itertools import combinations
 from warnings import warn
@@ -52,7 +52,7 @@ class DirectedSpectrum(object):
 
 
 def ds(X, f_samp, groups=None, pairwise=False, f_res=None, max_iter=1000,
-       tol=1e-6, window=boxcar(200), nperseg=None, noverlap=None):
+       tol=1e-6, window=None, nperseg=None, noverlap=None):
     """Returns a DirectedSpectrum object calculated from data X.
 
     Calculate the directed spectrum for each directed pair of channel
