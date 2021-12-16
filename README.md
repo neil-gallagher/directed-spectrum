@@ -65,7 +65,8 @@ ds(X, f_samp, groups=None, pairwise=False, f_res=None, max_iter=1000,
         passed to `get_window` to generate the window values, which are
         DFT-even by default. See `get_window` for a list of windows and
         required parameters. If `window` is array_like it will be used
-        directly as the window and its length must be nperseg.
+        directly as the window and its length must be nperseg. Defaults
+        to a Hann window.
 * `nperseg` : int, optional  
         Length of each segment. Defaults to None, but if window is str or
         tuple, is set to 256, and if window is array_like, is set to the
