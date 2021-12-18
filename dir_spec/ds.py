@@ -21,7 +21,7 @@ from scipy.fft import fft, ifft
 from numpy.linalg import cholesky, solve, eigh
 
 class DirectedSpectrum(object):
-    r"""Directed Spectrum object definition.
+    """Directed Spectrum object definition.
 
     Attributes
     ----------
@@ -243,7 +243,8 @@ def _cpsd_mat(X, f_samp, f_res, window, nperseg, noverlap):
 
     f, cpsd = csd(X[:,:,np.newaxis], X[:,np.newaxis], f_samp, window, nperseg,
                   noverlap, nfft, return_onesided=False, scaling='density')
-    # transpose area axes ??? check that this is right
+    # transpose area axes to match convention in paper, where positive phase
+    # offset indicates source lags target
     cpsd = cpsd.transpose(0,2,1,3)
     return (cpsd, f)
 
@@ -367,8 +368,7 @@ def _init_psi(cpsd):
         Initial value for A0 used in Wilson factorization.
     """
     # TODO: provide other initialization options; test which is best.
-    # gamma = ifft(cpsd, axis=1) ???
-    gamma = fft(cpsd, axis=1)
+    gamma = ifft(cpsd, axis=1)
     gamma0 = gamma[:, 0]
 
     # remove assymetry in gamma0 due to rounding error.
