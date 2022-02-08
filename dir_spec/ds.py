@@ -11,7 +11,7 @@ ds : Return a DirectedSpectrum object for multi-channel timeseries data.
 Author:  Neil Gallagher
 Modified by:  Billy Carson
 Date written:    8-27-2021
-Last modified:  12-14-2021
+Last modified:  2-8-2022
 """
 from itertools import combinations
 from warnings import warn
@@ -176,6 +176,8 @@ def ds(X, f_samp, groups=None, pairwise=False, f_res=None, max_iter=1000,
         # self-directed spectrum
         # = Sum_c(H_gc Sigma_cg) Sigma_gg^-1 Sum_b(H_gb Sigma_bg)*
         for g, g_mask in enumerate(group_idx):
+            # TODO: investigate whether calculating H_gg Sigma_gg H_gg
+            # separately impact accuracy
             this_H = H[:,:, g_mask]
             this_Sigma =  Sigma[:, np.newaxis, :, g_mask]
             HSig = this_H @ this_Sigma
@@ -243,8 +245,8 @@ def _cpsd_mat(X, f_samp, f_res, window, nperseg, noverlap):
 
     f, cpsd = csd(X[:,:,np.newaxis], X[:,np.newaxis], f_samp, window, nperseg,
                   noverlap, nfft, return_onesided=False, scaling='density')
-    # transpose area axes to match convention in paper, where positive phase
-    # offset indicates source lags target
+    # transpose area axes to match convention in paper: positive phase
+    # offset indicates source (1st index) lags target (2nd index)
     cpsd = cpsd.transpose(0,2,1,3)
     return (cpsd, f)
 
@@ -305,6 +307,10 @@ def _wilson_factorize(cpsd, f_samp, max_iter, tol, eps_multiplier=100):
         shape (n_windows, n_groups, n_groups)
         Wilson factorization solutions for innovation covariance matrix.
     """
+    sign, _ = np.linalg.slogdet(cpsd)
+    if np.any(sign == 0):
+        warn('CPSD matrix is singular, which may produce inaccurate results.')
+
     psi, A0 = _init_psi(cpsd)
 
     # Add diagonal of small values to cross-power spectral matrix to prevent
