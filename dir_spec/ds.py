@@ -11,7 +11,7 @@ ds : Return a DirectedSpectrum object for multi-channel timeseries data.
 Author:  Neil Gallagher
 Modified by:  Billy Carson
 Date written:    8-27-2021
-Last modified:  2-8-2022
+Last modified:  2-11-2022
 """
 from itertools import combinations
 from warnings import warn
@@ -307,10 +307,9 @@ def _wilson_factorize(cpsd, f_samp, max_iter, tol, eps_multiplier=100):
         shape (n_windows, n_groups, n_groups)
         Wilson factorization solutions for innovation covariance matrix.
     """
-    sign, _ = np.linalg.slogdet(cpsd)
-    if np.any(sign == 0):
-        warn('CPSD matrix is singular, which may produce inaccurate results.')
-
+    cpsd_cond = np.linalg.cond(cpsd)
+    if np.any(cpsd_cond > (1/ np.finfo(cpsd.dtype).eps)):
+        warn('CPSD matrix is singular within numerical tolerance, which may produce inaccurate results.')
     psi, A0 = _init_psi(cpsd)
 
     # Add diagonal of small values to cross-power spectral matrix to prevent
