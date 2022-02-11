@@ -52,7 +52,7 @@ class DirectedSpectrum(object):
 
 
 def ds(X, f_samp, groups=None, pairwise=False, f_res=None, max_iter=1000,
-       tol=1e-6, window=None, nperseg=None, noverlap=None):
+       tol=1e-6, window='hann', nperseg=None, noverlap=None):
     """Returns a DirectedSpectrum object calculated from data X.
 
     Calculate the directed spectrum for each directed pair of channel
