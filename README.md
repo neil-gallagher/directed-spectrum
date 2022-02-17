@@ -47,7 +47,7 @@ ds(X, f_samp, groups=None, pairwise=False, f_res=None, max_iter=1000,
         If 'True', calculate the pairwise directed spectrum
         (i.e. calculate seperately for each pair of groups/channels).
         Otherwise, the non-pairwise directed spectrum will be calculated.
-        Note the pairwise directed spectrum is not calculated for elements
+        Note the pairwise directed spectrum is not defined for elements
         where the source and target are the same.
 * `f_res` : float, optional  
         Frequency resolution of the calculated spectrum. For example, if
@@ -87,15 +87,16 @@ DirectedSpectrum(ds_array, f, cgroups)
 ```
 ##### Attributes #####
 * `ds_array` : ndarray, shape (n_windows, n_frequencies, n_groups, n_groups)  
-        Directed spectrum values between each pair of channels/groups
-        for each frequency and window. Axis 2 corresponds to the source
-        channel/group and axis 3 corresponds to the target channel/group.
-        For pairwise directed spectrum, elements for which target and source
-        are the same are not defined and are returned as NaNs. For 'full'
-        models, elements for which the target and source are the same
-        correspond to the self-directed spectrum, representing all signal
-        in that region that is not explained by any of the other sources in
-        the model.
+        Directed spectrum values between each pair of channels/groups 
+        for each frequency and window. Axis 2 corresponds to the source 
+        channel/group and axis 3 corresponds to the target 
+        channel/group. For 'full' models, elements for which the target 
+        and source are the same correspond to the self-directed 
+        spectrum, representing all signal in that region that is not 
+        explained by any of the other sources in the model. For pairwise 
+        directed spectrum, elements for which target and source are the 
+        same are not defined and these entries are populated with the 
+        power spectrum for the associated region instead.
 * `f` : ndarray, shape (n_frequencies)  
         Frequencies associated with axis 1 of ds_array.
 * `groups` : ndarray of strings, shape (n_groups)  

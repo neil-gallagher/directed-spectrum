@@ -9,9 +9,9 @@ Public Function
 ds : Return a DirectedSpectrum object for multi-channel timeseries data.
 
 Author:  Neil Gallagher
-Modified by:  Billy Carson
+Modified by:  Billy Carson, Neil Gallagher
 Date written:    8-27-2021
-Last modified:  2-11-2022
+Last modified:  2-16-2022
 """
 from itertools import combinations
 from warnings import warn
@@ -27,15 +27,16 @@ class DirectedSpectrum(object):
     ----------
     ds_array : ndarray
         shape (n_windows, n_frequencies, n_groups, n_groups)
-        Directed spectrum values between each pair of channels/groups
-        for each frequency and window. Axis 2 corresponds to the source
-        channel/group and axis 3 corresponds to the target channel/group.
-        For pairwise directed spectrum, elements for which target and source
-        are the same are not defined and are returned as NaNs. For 'full'
-        models, elements for which the target and source are the same
-        correspond to the self-directed spectrum, representing all signal
-        in that region that is not explained by any of the other sources in
-        the model.
+        Directed spectrum values between each pair of channels/groups 
+        for each frequency and window. Axis 2 corresponds to the source 
+        channel/group and axis 3 corresponds to the target 
+        channel/group. For 'full' models, elements for which the target 
+        and source are the same correspond to the self-directed 
+        spectrum, representing all signal in that region that is not 
+        explained by any of the other sources in the model. For pairwise 
+        directed spectrum, elements for which target and source are the 
+        same are not defined and these entries are populated with the 
+        power spectrum for the associated region instead.
     f : ndarray
         shape (n_frequencies)
         Frequencies associated with axis 1 of ds_array.
@@ -171,7 +172,18 @@ def ds(X, f_samp, groups=None, pairwise=False, f_res=None, max_iter=1000,
         ds_array[:,:, gp[1], gp[0]] = \
             np.diagonal(ds10, axis1=-2, axis2=-1).mean(axis=-1)
 
-    if not pairwise:
+    if pairwise:
+        # fill in elements where source equals target with power
+        # spectrum
+        psd = np.real(np.diagonal(cpsd, axis1=-2, axis2=-1))
+
+        # average channels within each group 
+        for g, g_mask in enumerate(group_idx):
+            # TODO: allow for other options besides average, matching 
+            # non-diagonal elements
+            ds_array[..., g, g] = psd[..., g_mask].mean(axis=-1)
+
+    else:
         # fill in elements where source equals target with
         # self-directed spectrum
         # = Sum_c(H_gc Sigma_cg) Sigma_gg^-1 Sum_b(H_gb Sigma_bg)*
