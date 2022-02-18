@@ -21,14 +21,15 @@ These properties of the directed spectrum also extend to other applications wher
 The `ds` function within the `ds` module takes 2 required parameters, in addition to several optional parameters, and returns an object of the `DirectedSpectrum` class.
 
 For more information on the directed spectrum please see the [associated publication](https://proceedings.neurips.cc/paper/2021/hash/3d36c07721a0a5a96436d6c536a132ec-Abstract.html):  
-Gallagher, N., Dzirasa, K. & Carlson, D. (2021). Directed Spectral Measures Improve Latent Network Models Of Neural Populations. *Advances in Neural Information Processing Systems 34*.
+Gallagher, N., Dzirasa, K. & Carlson, D. (2021). Directed Spectral Measures Improve Latent Network Models Of Neural Populations. *Advances in Neural Information Processing Systems 35*.
 
 
 ## Use ##
 This package has one public function: `ds`
 ```python
 ds(X, f_samp, groups=None, pairwise=False, f_res=None, max_iter=1000,
-       tol=1e-6, window=boxcar(200), nperseg=None, noverlap=None):
+       tol=1e-6, return_onesided=False, window=boxcar(200), nperseg=None,
+       noverlap=None):
 ```
 ##### Parameters #####
 * `X` : numpy.ndarray, shape (n_windows, n_channels, n_timepoints)  
@@ -54,12 +55,17 @@ ds(X, f_samp, groups=None, pairwise=False, f_res=None, max_iter=1000,
         set to 1, then the directed spectrum will be calculated for
         integer frequency values. If set to 'None' (the default), then
         the frequency resolution will be fs/nperseg.
-* `max_iter` : int  
+* `max_iter` : int, optional  
         Max number of Wilson factorization iterations. If factorization
         does not converge before reaching this value, directed spectrum
-        estimates may be inaccurate.
-* `tol` : float  
-        Wilson factorization convergence tolerance value.
+        estimates may be inaccurate. Defaults to 1000.
+* `tol` : float, optional  
+        Wilson factorization convergence tolerance value. Defaults to
+        1e-6.
+* `return_onesided` : bool, optional  
+        If True, return a one-sided spectrum. If False return a
+        two-sided spectrum. Must be False if the input timeseries is
+        complex. Defaults to False.
 * `window` : str or tuple or array_like, optional  
         Desired window to use. If `window` is a string or tuple, it is
         passed to `get_window` to generate the window values, which are
