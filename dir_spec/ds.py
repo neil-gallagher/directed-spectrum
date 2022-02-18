@@ -11,7 +11,7 @@ ds : Return a DirectedSpectrum object for multi-channel timeseries data.
 Author:  Neil Gallagher
 Modified by:  Billy Carson, Neil Gallagher
 Date written:    8-27-2021
-Last modified:  2-16-2022
+Last modified:  2-18-2022
 """
 from itertools import combinations
 from warnings import warn
@@ -19,6 +19,7 @@ import numpy as np
 from scipy.signal import csd, boxcar
 from scipy.fft import rfft, irfft, fft, ifft
 from numpy.linalg import cholesky, solve
+
 
 class DirectedSpectrum(object):
     """Directed Spectrum object definition.
@@ -135,7 +136,7 @@ def ds(X, f_samp, groups=None, pairwise=False, f_res=None, max_iter=1000,
     if groups is None:
         groups = list(np.arange(0, X.shape[1], 1))
 
-    cpsd, f = _cpsd_mat(X, f_samp, f_res, return_onesided, window, nperseg,
+    cpsd, f = _cpsd_mat(X, f_samp, f_res, window, nperseg,
                         noverlap)
 
     # Get lists of unique channel groups and associated indices
@@ -147,8 +148,7 @@ def ds(X, f_samp, groups=None, pairwise=False, f_res=None, max_iter=1000,
     ds_array = np.full(ds_arr_shape, np.nan, dtype=np.float64)
 
     if not pairwise:
-        H, Sigma = _wilson_factorize(cpsd, f_samp, max_iter, tol,
-                                     return_onesided)
+        H, Sigma = _wilson_factorize(cpsd, f_samp, max_iter, tol)
 
     for gp in group_pairs:
         # get indices of both groups in current pair.
@@ -164,8 +164,7 @@ def ds(X, f_samp, groups=None, pairwise=False, f_res=None, max_iter=1000,
 
             # Factorize cross power spectral density matrix into transfer
             # matrix (H) and covariance (Sigma).
-            H, Sigma = _wilson_factorize(sub_cpsd, f_samp, max_iter, tol,
-                                         return_onesided)
+            H, Sigma = _wilson_factorize(sub_cpsd, f_samp, max_iter, tol)
             ds01, ds10 = _var_to_ds(H, Sigma, sub_idx1)
         else:
             sub_H = H.take(pair_idx, axis=-2).take(pair_idx, axis=-1)
@@ -210,9 +209,20 @@ def ds(X, f_samp, groups=None, pairwise=False, f_res=None, max_iter=1000,
             ds_array[..., g, g] = \
                 np.diagonal(np.real(ds_gg), axis1=-2, axis2=-1).mean(axis=-1)
 
+    if return_onesided:
+        # convert to one sided spectrum
+        nyquist = np.floor(len(f)/2).astype(int)
+        ds_array = ds_array[:,:(nyquist+1)]
+        ds_array[:, 1:nyquist] *= 2
+        if len(f) % 2 != 0:
+            ds_array[:, nyquist] *= 2
+
+        f = np.abs(f[:(nyquist+1)])
+
+
     return DirectedSpectrum(ds_array, f, group_list)
 
-def _cpsd_mat(X, f_samp, f_res, return_onesided, window, nperseg, noverlap):
+def _cpsd_mat(X, f_samp, f_res, window, nperseg, noverlap):
     """Return cross power spectral density and associated frequencies.
 
     Parameters
@@ -230,9 +240,6 @@ def _cpsd_mat(X, f_samp, f_res, return_onesided, window, nperseg, noverlap):
         set to 1, then the Directed Spectrum will be calculated for integer
         frequency values. If set to 'None' (default), then nperseg must not
         be 'None' and the frequency resolution will be f_samp/nperseg.
-    return_onesided : bool
-        If True, return a one-sided spectrum. If False return a
-        two-sided spectrum.
     [Documentation for the following variables was copied and modified from
         the scipy.signal.spectral module. These variables are used for
         calculating the cross power spectral density matrix.]
@@ -266,7 +273,7 @@ def _cpsd_mat(X, f_samp, f_res, return_onesided, window, nperseg, noverlap):
         raise ValueError('Either nperseg or f_res must be provided.')
 
     f, cpsd = csd(X[:,:,np.newaxis], X[:,np.newaxis], f_samp, window, nperseg,
-                  noverlap, nfft, return_onesided=return_onesided,
+                  noverlap, nfft, return_onesided=False,
                   scaling='density')
     # transpose area axes to match convention in paper: positive phase
     # offset indicates source (1st index) lags target (2nd index)
@@ -300,8 +307,7 @@ def _group_indicies(groups):
     group_idx = [[g1==g2 for g1 in groups] for g2 in group_list]
     return (group_idx, group_list)
 
-def _wilson_factorize(cpsd, f_samp, max_iter, tol, onesided,
-                      eps_multiplier=100):
+def _wilson_factorize(cpsd, f_samp, max_iter, tol, eps_multiplier=100):
     """Factorize CPSD into transfer matrix (H) and covariance (Sigma).
 
     Implements the algorithm outlined in the following reference:
@@ -322,8 +328,6 @@ def _wilson_factorize(cpsd, f_samp, max_iter, tol, onesided,
         Max number of Wilson factorization iterations.
     tol : float
         Wilson factorization convergence tolerance value.
-    onesided : bool
-        If True, cpsd is onesided. If False, cpsd is twosided.
     eps_multiplier : int
         Constant multiplier used in stabilizing the Cholesky decomposition
         for positive semidefinite CPSD matrices.
@@ -340,8 +344,8 @@ def _wilson_factorize(cpsd, f_samp, max_iter, tol, onesided,
     cpsd_cond = np.linalg.cond(cpsd)
     if np.any(cpsd_cond > (1/ np.finfo(cpsd.dtype).eps)):
         warn('CPSD matrix is singular within numerical tolerance, which may produce inaccurate results.')
-    
-    psi, A0 = _init_psi(cpsd, onesided)
+
+    psi, A0 = _init_psi(cpsd)
 
     # Add diagonal of small values to cross-power spectral matrix to prevent
     # it from being negative semidefinite due to rounding errors
@@ -362,8 +366,8 @@ def _wilson_factorize(cpsd, f_samp, max_iter, tol, onesided,
             g = g + np.identity(cpsd.shape[-1])
             # TODO: compare these update steps to original Wilson algorithm.
             #       also check if psi[0] should be upper triangular.
-            
-            gplus, g0 = _plus_operator(g, onesided)
+
+            gplus, g0 = _plus_operator(g)
 
             # S is chosen so that g0 + S is upper triangular; S + S* = 0
             S = -np.tril(g0, -1)
@@ -387,15 +391,13 @@ def _wilson_factorize(cpsd, f_samp, max_iter, tol, onesided,
     return (H, Sigma)
 
 
-def _init_psi(cpsd, onesided):
+def _init_psi(cpsd):
     """Return initial psi value for wilson factorization.
 
     Parameters
     ----------
     cpsd : numpy.ndarray
         Cross power spectral density matrix.
-    onesided : bool
-        If True, cpsd is onesided. If False, cpsd is twosided.
 
     Returns
     -------
@@ -407,10 +409,7 @@ def _init_psi(cpsd, onesided):
         Initial value for A0 used in Wilson factorization.
     """
     # TODO: provide other initialization options; test which is best.
-    if onesided:
-        gamma = irfft(cpsd, axis=1)
-    else:
-        gamma = ifft(cpsd, axis=1)
+    gamma = ifft(cpsd, axis=1)
 
     gamma0 = gamma[:, 0]
 
@@ -420,7 +419,7 @@ def _init_psi(cpsd, onesided):
     psi = np.tile(h[:, np.newaxis], (1, cpsd.shape[1], 1, 1)).astype(complex)
     return psi, h
 
-def _plus_operator(g, onesided):
+def _plus_operator(g):
     """Remove all negative lag components from time-domain representation.
 
     Parameters
@@ -428,8 +427,6 @@ def _plus_operator(g, onesided):
     g: numpy.ndarray
         shape (n_frequencies, n_groups, n_groups)
         Frequency-domain representation to which transformation will be applied.
-    onesided : bool
-        If True, g is onesided. If False, g is twosided.
 
     Returns
     -------
@@ -441,27 +438,21 @@ def _plus_operator(g, onesided):
         Zero-lag component of g in time-domain.
     """
     # remove imaginary components from ifft due to rounding error.
-    if onesided:
-        gamma = irfft(g, axis=0).real
-    else:
-        gamma = ifft(g, axis=0).real
+    gamma = ifft(g, axis=0).real
 
     # take half of 0 lag
     gamma[0] *= 0.5
 
     # take half of nyquist component if fft had even # of points
     F = gamma.shape[0]
-    N = int(np.floor(F/2))
+    N = np.floor(F/2).astype(int)
     if F % 2 == 0:
         gamma[N] *= 0.5
 
     # zero out negative frequencies
     gamma[N+1:] = 0
 
-    if onesided:
-        gp = rfft(gamma, axis=0)
-    else:
-        gp = fft(gamma, axis=0)
+    gp = fft(gamma, axis=0)
     return gp, gamma[0]
 
 def _check_convergence(x, x0, tol):
