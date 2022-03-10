@@ -53,9 +53,9 @@ class DirectedSpectrum(object):
         self.groups = groups
 
 
-def ds(X, f_samp, groups=None, pairwise=False, f_res=None, max_iter=1000,
-       tol=1e-6, return_onesided=False, window='hann', nperseg=None,
-       noverlap=None):
+def ds(X, f_samp, groups=None, pairwise=False, f_res=None, return_onesided=False,
+       estimator='Wilson', max_iter=1000, tol=1e-6, order='aic', window='hann',
+       nperseg=None, noverlap=None):
     """Returns a DirectedSpectrum object calculated from data X.
 
     Calculate the directed spectrum for each directed pair of channel
@@ -90,20 +90,31 @@ def ds(X, f_samp, groups=None, pairwise=False, f_res=None, max_iter=1000,
         set to 1, then the directed spectrum will be calculated for
         integer frequency values. If set to 'None' (default), then
         the frequency resolution will be f_samp/nperseg.
-    max_iter : int, optional
-        Max number of Wilson factorization iterations. If factorization
-        does not converge before reaching this value, directed spectrum
-        estimates may be inaccurate. Defaults to 1000.
-    tol : float, optional
-        Wilson factorization convergence tolerance value. Defaults to
-        1e-6.
     return_onesided : bool, optional
         If True, return a one-sided spectrum. If False return a
         two-sided spectrum. Must be False if the input timeseries is
         complex. Defaults to False.
+    estimator : {'Wilson', 'AR'}, optional
+        Method to use for estimating the directed spectrum. 'Wilson' is
+        Wilson's spectral factorization of the data cross-spectral
+        density matrix. 'AR' fits an autoregressive model to the data.
+        Defaults to 'Wilson'.
+    max_iter : int, optional
+        Max number of Wilson factorization iterations. If factorization
+        does not converge before reaching this value, directed spectrum
+        estimates may be inaccurate. Used only when estimator is
+        'Wilson'. Defaults to 1000.
+    tol : float, optional
+        Wilson factorization convergence tolerance value. Used only when
+        estimator is 'Wilson'. Defaults to 1e-6.
+    order : int or 'aic', optional
+        Autoregressive model order. If 'aic', used Akaike Information
+        Criterion to automatically determine model order. Used only when
+        estimator is 'AR'. Defaults to 'aic'.
     [Documentation for the following variables was copied from the
         scipy.signal.spectral module. These variables are used for
-        calculating the cross power spectral density matrix.]
+        calculating the cross power spectral density matrix when
+        estimator is 'Wilson', and are not used otherwise.]
     window : str or tuple or array_like, optional
         Desired window to use. If `window` is a string or tuple, it is
         passed to `get_window` to generate the window values, which are
@@ -136,19 +147,29 @@ def ds(X, f_samp, groups=None, pairwise=False, f_res=None, max_iter=1000,
     if groups is None:
         groups = list(np.arange(0, X.shape[1], 1))
 
-    cpsd, f = _cpsd_mat(X, f_samp, f_res, window, nperseg,
-                        noverlap)
-
     # Get lists of unique channel groups and associated indices
     group_idx, group_list = _group_indicies(groups)
     G = len(group_list)
     group_pairs = combinations(range(G), 2)
 
-    ds_arr_shape = cpsd.shape[:2] + (G, G)
+    import pdb; pdb.set_trace()
+    # initialize ds array
+    nfft = _calc_nfft(f_samp, f_res, nperseg)
+    ds_arr_shape = (X.shape[0], nfft, G, G)
     ds_array = np.full(ds_arr_shape, np.nan, dtype=np.float64)
 
-    if not pairwise:
-        H, Sigma = _wilson_factorize(cpsd, f_samp, max_iter, tol)
+    import pdb; pdb.set_trace()
+    if estimator == 'Wilson':
+        cpsd, f = _cpsd_mat(X, f_samp, window, nperseg, noverlap, nfft)
+        if not pairwise:
+            H, Sigma = _wilson_factorize(cpsd, f_samp, max_iter, tol)
+    elif estimator == 'AR':
+        if not pairwise:
+            A, Sigma = _fit_var(X, order)
+            H = _var_to_transfer(A, f_samp)
+    else:
+        raise ValueError(f'Unsupported value for parameter \'estimator\':'
+                         ' {estimator}')
 
     for gp in group_pairs:
         # get indices of both groups in current pair.
@@ -158,13 +179,20 @@ def ds(X, f_samp, groups=None, pairwise=False, f_res=None, max_iter=1000,
         sub_idx1 = idx1[pair_idx] # subset of pair_idx in group 1
 
         if pairwise:
-            # Get cross power spectral density matrix corresponding to
-            # indices of selected pairs.
-            sub_cpsd = cpsd.take(pair_idx, axis=-2).take(pair_idx, axis=-1)
+            if estimator == 'Wilson':
+                # Get cross power spectral density matrix corresponding to
+                # indices of selected pairs.
+                sub_cpsd = cpsd.take(pair_idx, axis=-2).take(pair_idx, axis=-1)
 
-            # Factorize cross power spectral density matrix into transfer
-            # matrix (H) and covariance (Sigma).
-            H, Sigma = _wilson_factorize(sub_cpsd, f_samp, max_iter, tol)
+                # Factorize cross power spectral density matrix into transfer
+                # matrix (H) and covariance (Sigma).
+                H, Sigma = _wilson_factorize(sub_cpsd, f_samp, max_iter, tol)
+            else: # AR model estimation
+                import pdb; pdb.set_trace()
+                sub_X = X.take(pair_idx, axis=1)
+                A, Sigma = _fit_var(sub_X, order)
+                H = var_to_transfer(A, f_samp)
+
             ds01, ds10 = _var_to_ds(H, Sigma, sub_idx1)
         else:
             sub_H = H.take(pair_idx, axis=-2).take(pair_idx, axis=-1)
@@ -222,24 +250,17 @@ def ds(X, f_samp, groups=None, pairwise=False, f_res=None, max_iter=1000,
 
     return DirectedSpectrum(ds_array, f, group_list)
 
-def _cpsd_mat(X, f_samp, f_res, window, nperseg, noverlap):
+def _cpsd_mat(X, f_samp, window, nperseg, noverlap, nfft):
     """Return cross power spectral density and associated frequencies.
 
     Parameters
     ----------
     X : numpy.ndarray
         shape (n_epochs, n_signals, n_times)
-        Timeseries data from multiple signals/channels. Time series data for
-        each signal is assumed to be approximately stationary within a
-        given epoch. If a 2D array is provided as input, it is assumed that
-        n_epcohs is equal to 1.
+        Timeseries data from multiple signals/channels. See ds docstring
+        for more details.
     f_samp : float
         Sampling rate of time series data X.
-    f_res : float
-        Frequency resolution of the calculated spectrum. For example, if
-        set to 1, then the Directed Spectrum will be calculated for integer
-        frequency values. If set to 'None' (default), then nperseg must not
-        be 'None' and the frequency resolution will be f_samp/nperseg.
     [Documentation for the following variables was copied and modified from
         the scipy.signal.spectral module. These variables are used for
         calculating the cross power spectral density matrix.]
@@ -257,6 +278,9 @@ def _cpsd_mat(X, f_samp, f_res, window, nperseg, noverlap):
     noverlap: int, optional
         Number of points to overlap between segments. If `None`,
         ``noverlap = nperseg // 2``. Defaults to `None`.
+    nfft: int, optional
+        Length of the FFT used, if a zero padded FFT is desired. If None,
+        the FFT length is nperseg.
 
     Returns
     ------
@@ -264,17 +288,10 @@ def _cpsd_mat(X, f_samp, f_res, window, nperseg, noverlap):
         Tuple consisting of cross power spectral density matrix and array
         associated frequencies.
     """
-    # if frequency resolution is set, use it to determine fft length.
-    if f_res:
-        nfft = int(f_samp/f_res)
-    elif nperseg:
-        nfft = int(nperseg)
-    else:
-        raise ValueError('Either nperseg or f_res must be provided.')
-
     f, cpsd = csd(X[:,:,np.newaxis], X[:,np.newaxis], f_samp, window, nperseg,
                   noverlap, nfft, return_onesided=False,
                   scaling='density')
+
     # transpose area axes to match convention in paper: positive phase
     # offset indicates source (1st index) lags target (2nd index)
     cpsd = cpsd.transpose(0,2,1,3)
@@ -283,6 +300,21 @@ def _cpsd_mat(X, f_samp, f_res, window, nperseg, noverlap):
     cpsd = np.moveaxis(cpsd, 3, 1)
 
     return (cpsd, f)
+
+
+def _calc_nfft(f_samp, f_res, nperseg):
+    """Calculate window length for fft"""
+
+    # if frequency resolution is set, use it to determine fft length.
+    if f_res:
+        nfft = int(f_samp/f_res)
+    # else use nperseg
+    elif nperseg:
+        nfft = int(nperseg)
+    else:
+        raise ValueError('Either nperseg or f_res must be provided.')
+    return nfft
+
 
 def _group_indicies(groups):
     """Return list of unique groups and associated indices.
@@ -306,6 +338,53 @@ def _group_indicies(groups):
     group_list = np.unique(groups)
     group_idx = [[g1==g2 for g1 in groups] for g2 in group_list]
     return (group_idx, group_list)
+
+
+def _fit_var(X, order):
+    """Fit vector autoregressive model to data.
+
+    Parameters
+    ----------
+    X : numpy.ndarray
+        shape (n_epochs, n_signals, n_times)
+        Timeseries data from multiple signals/channels. Time series data for
+        each signal is assumed to be approximately stationary within a
+        given epoch.
+    order : int, optional
+        Autoregressive model order (i.e. number of lags). If set to
+        'aic', then order is chosen automatically using Akaike
+        information criterion on a small subset of the data.
+
+    Returns
+    -------
+    A : numpy.ndarray
+        shape (n_epochs, n_lags, n_signals, n_signals)
+        Autoregressive matrices of the VAR model for each epoch.
+    Sigma : numpy.ndarray
+        shape (n_epochs, n_signals, n_signals)
+        Innovation covariance matrix of the VAR model for each epoch.
+    """
+
+
+    
+
+def _var_to_transfer(A, f_samp):
+    """Calculate transfer matrix (H) from autoregressive matrices.
+
+    Parameters
+    ----------
+    A : numpy.ndarray
+        shape (n_epochs, n_lags, n_signals, n_signals)
+        Autoregressive matrices of the VAR model for each epoch.
+    f_samp : float
+        Sampling rate associated with X.
+
+    Returns
+    -------
+    H : numpy.ndarray
+        shape (n_windows, n_frequencies, n_groups, n_groups)
+        VAR solutions for transfer matrix.
+    """
 
 def _wilson_factorize(cpsd, f_samp, max_iter, tol, eps_multiplier=100):
     """Factorize CPSD into transfer matrix (H) and covariance (Sigma).
@@ -386,7 +465,7 @@ def _wilson_factorize(cpsd, f_samp, max_iter, tol, eps_multiplier=100):
             warn('Wilson factorization failed to converge.', stacklevel=2)
 
         # right-side solve
-        H[w] = (solve(A0[w].T, psi[w].transpose(0, 2, 1))).transpose(0, 2, 1) 
+        H[w] = (solve(A0[w].T, psi[w].transpose(0, 2, 1))).transpose(0, 2, 1)
         Sigma[w] = (A0[w] @ A0[w].T)
     return (H, Sigma)
 

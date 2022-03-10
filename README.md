@@ -22,14 +22,14 @@ The `ds` function within the `ds` module takes 2 required parameters, in additio
 
 For more information on the directed spectrum please see the [associated publication](https://proceedings.neurips.cc/paper/2021/hash/3d36c07721a0a5a96436d6c536a132ec-Abstract.html):  
 Gallagher, N., Dzirasa, K. & Carlson, D. (2021). Directed Spectral Measures Improve Latent Network Models Of Neural Populations. *Advances in Neural Information Processing Systems 35*.
-
+If you end up using the directed spectrum in your research, please cite that reference.
 
 ## Use ##
 This package has one public function: `ds`
 ```python
-ds(X, f_samp, groups=None, pairwise=False, f_res=None, max_iter=1000,
-       tol=1e-6, return_onesided=False, window=boxcar(200), nperseg=None,
-       noverlap=None):
+ds(X, f_samp, groups=None, pairwise=False, f_res=None, return_onesided=False,
+       estimator='Wilson', max_iter=1000, tol=1e-6, order='aie', window='hann',
+       nperseg=None, noverlap=None):
 ```
 ##### Parameters #####
 * `X` : numpy.ndarray, shape (n_windows, n_channels, n_timepoints)  
@@ -55,17 +55,27 @@ ds(X, f_samp, groups=None, pairwise=False, f_res=None, max_iter=1000,
         set to 1, then the directed spectrum will be calculated for
         integer frequency values. If set to 'None' (the default), then
         the frequency resolution will be fs/nperseg.
-* `max_iter` : int, optional  
-        Max number of Wilson factorization iterations. If factorization
-        does not converge before reaching this value, directed spectrum
-        estimates may be inaccurate. Defaults to 1000.
-* `tol` : float, optional  
-        Wilson factorization convergence tolerance value. Defaults to
-        1e-6.
 * `return_onesided` : bool, optional  
         If True, return a one-sided spectrum. If False return a
         two-sided spectrum. Must be False if the input timeseries is
         complex. Defaults to False.
+* `estimator` : {'Wilson', 'AR'}, optional  
+        Method to use for estimating the directed spectrum. 'Wilson' is
+        Wilson's spectral factorization of the data cross-spectral
+        density matrix. 'AR' fits an autoregressive model to the data.
+        Defaults to 'Wilson'.
+* `max_iter` : int, optional  
+        Max number of Wilson factorization iterations. If factorization
+        does not converge before reaching this value, directed spectrum
+        estimates may be inaccurate. Used only when estimator is
+        'Wilson'. No Defaults to 1000.
+* `tol` : float, optional  
+        Wilson factorization convergence tolerance value. Used only when
+        estimator is 'Wilson'. Defaults to 1e-6.
+* `order` : int or 'aic', optional  
+        Autoregressive model order. If 'aic', used Akaike Information
+        Criterion to automatically determine model order. Used only when
+        estimator is 'AR'. Defaults to 'aic'.
 * `window` : str or tuple or array_like, optional  
         Desired window to use. If `window` is a string or tuple, it is
         passed to `get_window` to generate the window values, which are
@@ -84,7 +94,8 @@ ds(X, f_samp, groups=None, pairwise=False, f_res=None, max_iter=1000,
  *[Documentation for the `window`, `nperseg`, and `noverlap` variables was
         copied directly from the scipy.signal.spectral module. These
         variables are used for calculating the cross power spectral density
-        matrix as an intermediate step in calculating the directed spectrum.]*
+        matrix as an intermediate step in calculating the directed spectrum 
+        when estimator is 'Wilson', and are not used otherwise.]*
 
 
 `ds` returns a `DirectedSpectrum` object.

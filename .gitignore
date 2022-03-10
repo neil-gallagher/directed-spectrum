@@ -1,0 +1,5 @@
+# .gitignore
+
+# ignore python stuff
+*.egg-info/
+__pycache__/
