@@ -11,13 +11,13 @@ ds : Return a DirectedSpectrum object for multi-channel timeseries data.
 Author:  Neil Gallagher
 Modified by:  Billy Carson, Neil Gallagher
 Date written:    8-27-2021
-Last modified:  2-18-2022
+Last modified:  3-17-2022
 """
 from itertools import combinations
 from warnings import warn
 import numpy as np
-from scipy.signal import csd, boxcar
-from scipy.fft import rfft, irfft, fft, ifft
+from scipy.signal import csd, welch
+from scipy.fft import fft, ifft
 from numpy.linalg import cholesky, solve
 
 
@@ -152,13 +152,11 @@ def ds(X, f_samp, groups=None, pairwise=False, f_res=None, return_onesided=False
     G = len(group_list)
     group_pairs = combinations(range(G), 2)
 
-    import pdb; pdb.set_trace()
     # initialize ds array
     nfft = _calc_nfft(f_samp, f_res, nperseg)
     ds_arr_shape = (X.shape[0], nfft, G, G)
     ds_array = np.full(ds_arr_shape, np.nan, dtype=np.float64)
 
-    import pdb; pdb.set_trace()
     if estimator == 'Wilson':
         cpsd, f = _cpsd_mat(X, f_samp, window, nperseg, noverlap, nfft)
         if not pairwise:
@@ -166,7 +164,8 @@ def ds(X, f_samp, groups=None, pairwise=False, f_res=None, return_onesided=False
     elif estimator == 'AR':
         if not pairwise:
             A, Sigma = _fit_var(X, order)
-            H = _var_to_transfer(A, f_samp)
+            _check_specrad(A)
+            H = _var_to_transfer(A, nfft)
     else:
         raise ValueError(f'Unsupported value for parameter \'estimator\':'
                          ' {estimator}')
@@ -188,10 +187,10 @@ def ds(X, f_samp, groups=None, pairwise=False, f_res=None, return_onesided=False
                 # matrix (H) and covariance (Sigma).
                 H, Sigma = _wilson_factorize(sub_cpsd, f_samp, max_iter, tol)
             else: # AR model estimation
-                import pdb; pdb.set_trace()
                 sub_X = X.take(pair_idx, axis=1)
                 A, Sigma = _fit_var(sub_X, order)
-                H = var_to_transfer(A, f_samp)
+                _check_specrad(A)
+                H = _var_to_transfer(A, nfft)
 
             ds01, ds10 = _var_to_ds(H, Sigma, sub_idx1)
         else:
@@ -207,13 +206,17 @@ def ds(X, f_samp, groups=None, pairwise=False, f_res=None, return_onesided=False
             np.diagonal(ds10, axis1=-2, axis2=-1).mean(axis=-1)
 
     if pairwise:
-        # fill in elements where source equals target with power
-        # spectrum
-        psd = np.real(np.diagonal(cpsd, axis1=-2, axis2=-1))
+        # fill in elements where source equals target with power spectrum
+        if estimator == 'AR':
+            f, psd = welch(X, f_samp, window, nperseg, noverlap, nfft,
+                        return_onesided=False, scaling='density')
+            psd = psd.swapaxes(-1, -2)
+        else:
+            psd = np.real(np.diagonal(cpsd, axis1=-2, axis2=-1))
 
-        # average channels within each group 
+        # average channels within each group
         for g, g_mask in enumerate(group_idx):
-            # TODO: allow for other options besides average, matching 
+            # TODO: allow for other options besides average, matching
             # non-diagonal elements
             ds_array[..., g, g] = psd[..., g_mask].mean(axis=-1)
 
@@ -238,15 +241,18 @@ def ds(X, f_samp, groups=None, pairwise=False, f_res=None, return_onesided=False
                 np.diagonal(np.real(ds_gg), axis1=-2, axis2=-1).mean(axis=-1)
 
     if return_onesided:
+        if (estimator=='AR') and not pairwise:
+            # f array hasn't been created yet
+            f = np.fft.fftfreq(nfft, 1/f_samp)
+
         # convert to one sided spectrum
         nyquist = np.floor(len(f)/2).astype(int)
         ds_array = ds_array[:,:(nyquist+1)]
         ds_array[:, 1:nyquist] *= 2
+
         if len(f) % 2 != 0:
             ds_array[:, nyquist] *= 2
-
         f = np.abs(f[:(nyquist+1)])
-
 
     return DirectedSpectrum(ds_array, f, group_list)
 
@@ -364,11 +370,48 @@ def _fit_var(X, order):
         shape (n_epochs, n_signals, n_signals)
         Innovation covariance matrix of the VAR model for each epoch.
     """
+    # demean data
+    X -= X.mean(axis=-1, keepdims=True)
 
+    # parse X into unlagged (dependent) and lagged (independent) components
+    X_unlag = X[..., order:].swapaxes(1,2)
+    n_epochs, n_samps, n_signals = X_unlag.shape
+    lag_idx = np.arange(order-1, -1, -1)[:,np.newaxis] + np.arange(n_samps)
+    X_lag = X[:, :, lag_idx]
+    X_lag = X_lag.reshape((n_epochs, -1, n_samps)).swapaxes(1,2)
 
-    
+    # solve VAR model via least squares
+    A = np.full((n_epochs, n_signals*order, n_signals), np.nan)
+    Sigma = np.full((n_epochs, n_signals, n_signals), np.nan)
+    for e in range(n_epochs):
+        # lstsq expects n_samps as first dim, so transpose axes
+        A[e], _,_,_ = np.linalg.lstsq(X_lag[e], X_unlag[e], rcond=None)
+        resid = X_unlag[e] - X_lag[e]@A[e]
+        Sigma[e] = np.cov(resid, rowvar=False)
+    # reshape A so that X[...,t] = Sum_p X[...,t-p] A[:,p]
+    A = A.reshape((n_epochs, n_signals, order, n_signals)).swapaxes(1,2)
+    return (A, Sigma)
 
-def _var_to_transfer(A, f_samp):
+def _check_specrad(A):
+    """ Return spectral radius for the associated VAR model"""
+    n_epochs, order, n_signals, _ = A.shape
+    var_mat1 = A.reshape((n_epochs, -1, n_signals))
+    var_mat2 = np.broadcast_to(np.vstack((np.eye(n_signals*(order-1)),
+                                          np.zeros((n_signals,
+                                                    n_signals*(order-1))))),
+                               (n_epochs, n_signals*order, n_signals*(order-1)))
+    var_mat = np.concatenate((var_mat1, var_mat2), axis=2)
+
+    specrad = abs(np.linalg.eigvals(var_mat)).max(axis=1)
+    if np.any(specrad >= 1):
+        raise RuntimeError(f'VAR model of data is not stable for at least one'
+                           ' epoch (spectral radius > 1); try preprocssing your'
+                           ' data differently to increase stationarity, or '
+                           'setting pairwise=False.')
+
+    return
+
+def _var_to_transfer(A, nfft):
     """Calculate transfer matrix (H) from autoregressive matrices.
 
     Parameters
@@ -376,8 +419,8 @@ def _var_to_transfer(A, f_samp):
     A : numpy.ndarray
         shape (n_epochs, n_lags, n_signals, n_signals)
         Autoregressive matrices of the VAR model for each epoch.
-    f_samp : float
-        Sampling rate associated with X.
+    nfft: int, optional
+        Length of the FFT used, if a zero padded FFT is desired.
 
     Returns
     -------
@@ -385,6 +428,13 @@ def _var_to_transfer(A, f_samp):
         shape (n_windows, n_frequencies, n_groups, n_groups)
         VAR solutions for transfer matrix.
     """
+    id_mat = np.broadcast_to(np.eye(A.shape[-1]),
+                             (A.shape[0], 1, A.shape[2], A.shape[3]))
+    ia = np.concatenate((id_mat, -A), axis=1)
+    iaf = fft(ia, nfft, axis=1)
+    H = np.linalg.inv(iaf)
+    return H
+
 
 def _wilson_factorize(cpsd, f_samp, max_iter, tol, eps_multiplier=100):
     """Factorize CPSD into transfer matrix (H) and covariance (Sigma).
@@ -414,10 +464,10 @@ def _wilson_factorize(cpsd, f_samp, max_iter, tol, eps_multiplier=100):
     Returns
     -------
     H : numpy.ndarray
-        shape (n_windows, n_frequencies, n_groups, n_groups)
+        shape (n_windows, n_frequencies, n_signals, n_signals)
         Wilson factorization solutions for transfer matrix.
     Sigma : numpy.ndarray
-        shape (n_windows, n_groups, n_groups)
+        shape (n_windows, n_signals, n_signals)
         Wilson factorization solutions for innovation covariance matrix.
     """
     cpsd_cond = np.linalg.cond(cpsd)
