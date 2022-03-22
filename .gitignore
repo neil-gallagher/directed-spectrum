@@ -1,0 +1,8 @@
+# .gitignore
+
+# ignore backups
+*~
+
+*.egg-info
+build
+*/__pycache__
