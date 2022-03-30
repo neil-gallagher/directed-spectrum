@@ -11,7 +11,7 @@ ds : Return a DirectedSpectrum object for multi-channel timeseries data.
 Author:  Neil Gallagher
 Modified by:  Billy Carson, Neil Gallagher
 Date written:    8-27-2021
-Last modified:  3-17-2022
+Last modified:  3-29-2022
 """
 from itertools import combinations
 from warnings import warn
@@ -28,7 +28,7 @@ class DirectedSpectrum(object):
     ----------
     ds_array : ndarray
         shape (n_windows, n_frequencies, n_groups, n_groups)
-        Directed spectrum values between each pair of channels/groups 
+        Directed spectrum values between each pair of channels/groups
         for each frequency and window. Axis 2 corresponds to the source 
         channel/group and axis 3 corresponds to the target 
         channel/group. For 'full' models, elements for which the target 
@@ -53,9 +53,9 @@ class DirectedSpectrum(object):
         self.groups = groups
 
 
-def ds(X, f_samp, groups=None, pairwise=False, f_res=None, return_onesided=False,
-       estimator='Wilson', max_iter=1000, tol=1e-6, order='aic', window='hann',
-       nperseg=None, noverlap=None):
+def ds(X, f_samp, groups=None, pairwise=False, f_res=None,
+       return_onesided=False, estimator='Wilson', order='aic', max_iter=1000,
+       tol=1e-6,  window='hann', nperseg=None, noverlap=None):
     """Returns a DirectedSpectrum object calculated from data X.
 
     Calculate the directed spectrum for each directed pair of channel
@@ -99,6 +99,10 @@ def ds(X, f_samp, groups=None, pairwise=False, f_res=None, return_onesided=False
         Wilson's spectral factorization of the data cross-spectral
         density matrix. 'AR' fits an autoregressive model to the data.
         Defaults to 'Wilson'.
+    order : int or 'aic', optional
+        Autoregressive model order. If 'aic', used Akaike Information
+        Criterion to automatically determine model order. Used only when
+        estimator is 'AR'. Defaults to 'aic'.
     max_iter : int, optional
         Max number of Wilson factorization iterations. If factorization
         does not converge before reaching this value, directed spectrum
@@ -107,10 +111,6 @@ def ds(X, f_samp, groups=None, pairwise=False, f_res=None, return_onesided=False
     tol : float, optional
         Wilson factorization convergence tolerance value. Used only when
         estimator is 'Wilson'. Defaults to 1e-6.
-    order : int or 'aic', optional
-        Autoregressive model order. If 'aic', used Akaike Information
-        Criterion to automatically determine model order. Used only when
-        estimator is 'AR'. Defaults to 'aic'.
     [Documentation for the following variables was copied from the
         scipy.signal.spectral module. These variables are used for
         calculating the cross power spectral density matrix when
@@ -157,18 +157,18 @@ def ds(X, f_samp, groups=None, pairwise=False, f_res=None, return_onesided=False
     ds_arr_shape = (X.shape[0], nfft, G, G)
     ds_array = np.full(ds_arr_shape, np.nan, dtype=np.float64)
 
-    if estimator == 'Wilson':
+    estimator = estimator.lower()
+    if estimator == 'wilson':
         cpsd, f = _cpsd_mat(X, f_samp, window, nperseg, noverlap, nfft)
         if not pairwise:
             H, Sigma = _wilson_factorize(cpsd, f_samp, max_iter, tol)
-    elif estimator == 'AR':
+    elif estimator == 'ar':
         if not pairwise:
             A, Sigma = _fit_var(X, order)
-            _check_specrad(A)
             H = _var_to_transfer(A, nfft)
     else:
         raise ValueError(f'Unsupported value for parameter \'estimator\':'
-                         ' {estimator}')
+                         f' {estimator}')
 
     for gp in group_pairs:
         # get indices of both groups in current pair.
@@ -178,7 +178,7 @@ def ds(X, f_samp, groups=None, pairwise=False, f_res=None, return_onesided=False
         sub_idx1 = idx1[pair_idx] # subset of pair_idx in group 1
 
         if pairwise:
-            if estimator == 'Wilson':
+            if estimator == 'wilson':
                 # Get cross power spectral density matrix corresponding to
                 # indices of selected pairs.
                 sub_cpsd = cpsd.take(pair_idx, axis=-2).take(pair_idx, axis=-1)
@@ -188,8 +188,7 @@ def ds(X, f_samp, groups=None, pairwise=False, f_res=None, return_onesided=False
                 H, Sigma = _wilson_factorize(sub_cpsd, f_samp, max_iter, tol)
             else: # AR model estimation
                 sub_X = X.take(pair_idx, axis=1)
-                A, Sigma = _fit_var(sub_X, order)
-                _check_specrad(A)
+                A, Sigma = _fit_var(sub_X, order, print_ord=False)
                 H = _var_to_transfer(A, nfft)
 
             ds01, ds10 = _var_to_ds(H, Sigma, sub_idx1)
@@ -207,10 +206,13 @@ def ds(X, f_samp, groups=None, pairwise=False, f_res=None, return_onesided=False
 
     if pairwise:
         # fill in elements where source equals target with power spectrum
-        if estimator == 'AR':
+        if estimator == 'ar':
             f, psd = welch(X, f_samp, window, nperseg, noverlap, nfft,
                         return_onesided=False, scaling='density')
             psd = psd.swapaxes(-1, -2)
+            # compensate for f_samp scaling that will be applied below
+            # since it shouldn't actually be applied to diagonals here
+            psd *= f_samp
         else:
             psd = np.real(np.diagonal(cpsd, axis1=-2, axis2=-1))
 
@@ -240,8 +242,11 @@ def ds(X, f_samp, groups=None, pairwise=False, f_res=None, return_onesided=False
             ds_array[..., g, g] = \
                 np.diagonal(np.real(ds_gg), axis1=-2, axis2=-1).mean(axis=-1)
 
+    if estimator=='ar':
+        ds_array /= f_samp
+
     if return_onesided:
-        if (estimator=='AR') and not pairwise:
+        if (estimator=='ar') and not pairwise:
             # f array hasn't been created yet
             f = np.fft.fftfreq(nfft, 1/f_samp)
 
@@ -346,7 +351,7 @@ def _group_indicies(groups):
     return (group_idx, group_list)
 
 
-def _fit_var(X, order):
+def _fit_var(X, order, maxord=20, n_ord_est_epochs=30, print_ord=True):
     """Fit vector autoregressive model to data.
 
     Parameters
@@ -360,7 +365,15 @@ def _fit_var(X, order):
         Autoregressive model order (i.e. number of lags). If set to
         'aic', then order is chosen automatically using Akaike
         information criterion on a small subset of the data.
-
+    maxord : int, optional
+        Maximum order possible. Only used when order is 'aic'.
+        Default is 50.
+    n_ord_est_epochs : int, optional
+        Number of epochs to sample from full dataset for estimating
+        model order. Only used when order is 'aic'. Default is 30.
+    print_ord: bool, optional
+        Indicates whether to print chosen order when order is 'aic'.
+        Defaults to True.
     Returns
     -------
     A : numpy.ndarray
@@ -373,6 +386,51 @@ def _fit_var(X, order):
     # demean data
     X -= X.mean(axis=-1, keepdims=True)
 
+    if order == 'aic':
+        # estimate model order
+        # (use a subset of the data for efficiency)
+        rng = np.random.default_rng()
+        if n_ord_est_epochs < X.shape[0]:
+            samp_X = rng.choice(X, n_ord_est_epochs, replace=False)
+        else:
+            n_ord_est_epochs = X.shape[0]
+            samp_X = X
+        n_samps = samp_X.shape[2]
+
+        aic = np.zeros((maxord, n_ord_est_epochs))
+        maxord = min(maxord, n_samps-1)
+        for o in range(maxord):
+            order = o+1
+            A, Sigma, bad_epoch = _fit_var_helper(samp_X, order)
+            n_params = A.size/n_ord_est_epochs
+            n_obs = n_samps - order
+            sign, nll = np.linalg.slogdet(Sigma)
+            # if sign is 0, Sigma is singular, so model is unstable
+            nll[sign==0] = np.nan
+            aic[o] = nll + 2*n_params/(n_obs-n_params-1)
+
+        try:
+            order = np.nanargmin(aic.max(axis=1)) + 1
+        except ValueError:
+            print('Could not find an AR model order that produced '
+                  'consistently stable (spectral radius > 1) models. '
+                  'Try preprocssing your data differently to increase '
+                  'stationarity, or setting pairwise=False.')
+            raise
+        if print_ord:
+            print(f'Model order {order:d} selected using AIC.')
+
+    A, Sigma, bad_epoch = _fit_var_helper(X, order)
+    if np.any(bad_epoch):
+        warn('VAR model of data is not stable for at least one epoch '
+             '(spectral radius > 1); directed spectrum values for these'
+             ' epcohs will be set to NaN. Try preprocssing your data '
+             'differently to increase stationarity, or setting '
+             'pairwise=False.')
+
+    return (A, Sigma)
+
+def _fit_var_helper(X, order):
     # parse X into unlagged (dependent) and lagged (independent) components
     X_unlag = X[..., order:].swapaxes(1,2)
     n_epochs, n_samps, n_signals = X_unlag.shape
@@ -388,14 +446,19 @@ def _fit_var(X, order):
         A[e], _,_,_ = np.linalg.lstsq(X_lag[e], X_unlag[e], rcond=None)
         resid = X_unlag[e] - X_lag[e]@A[e]
         Sigma[e] = np.cov(resid, rowvar=False)
-    # reshape A so that X[...,t] = Sum_p X[...,t-p] A[:,p]
-    A = A.reshape((n_epochs, n_signals, order, n_signals)).swapaxes(1,2)
-    return (A, Sigma)
+    # reshape A so that X[...,t] = Sum_p A[:,p] X[...,t-p]
+    A = A.reshape((n_epochs, n_signals, order, n_signals)).transpose((0,2,3,1))
+
+    # check spectral radius of A for instability
+    bad_epoch = _check_specrad(A)
+    A[bad_epoch] = np.nan
+    Sigma[bad_epoch] = np.nan
+    return (A, Sigma, bad_epoch)
 
 def _check_specrad(A):
     """ Return spectral radius for the associated VAR model"""
     n_epochs, order, n_signals, _ = A.shape
-    var_mat1 = A.reshape((n_epochs, -1, n_signals))
+    var_mat1 = A.swapaxes(2,3).reshape((n_epochs, -1, n_signals))
     var_mat2 = np.broadcast_to(np.vstack((np.eye(n_signals*(order-1)),
                                           np.zeros((n_signals,
                                                     n_signals*(order-1))))),
@@ -403,13 +466,7 @@ def _check_specrad(A):
     var_mat = np.concatenate((var_mat1, var_mat2), axis=2)
 
     specrad = abs(np.linalg.eigvals(var_mat)).max(axis=1)
-    if np.any(specrad >= 1):
-        raise RuntimeError(f'VAR model of data is not stable for at least one'
-                           ' epoch (spectral radius > 1); try preprocssing your'
-                           ' data differently to increase stationarity, or '
-                           'setting pairwise=False.')
-
-    return
+    return (specrad >=1)
 
 def _var_to_transfer(A, nfft):
     """Calculate transfer matrix (H) from autoregressive matrices.
@@ -473,13 +530,14 @@ def _wilson_factorize(cpsd, f_samp, max_iter, tol, eps_multiplier=100):
     cpsd_cond = np.linalg.cond(cpsd)
     if np.any(cpsd_cond > (1/ np.finfo(cpsd.dtype).eps)):
         warn('CPSD matrix is singular within numerical tolerance, which may produce inaccurate results.')
+        # Add diagonal of small values to cross-power spectral matrix to prevent
+        # it from being negative semidefinite due to rounding errors
+        this_eps = np.spacing(np.abs(cpsd)).max()
+        cpsd = cpsd + np.eye(cpsd.shape[-1])*this_eps*eps_multiplier
 
     psi, A0 = _init_psi(cpsd)
 
-    # Add diagonal of small values to cross-power spectral matrix to prevent
-    # it from being negative semidefinite due to rounding errors
-    this_eps = np.spacing(np.abs(cpsd)).max()
-    L = cholesky(cpsd + np.eye(cpsd.shape[-1])*this_eps*eps_multiplier)
+    L = cholesky(cpsd)
     #eigval, eigvec = eigh(cpsd)
     #eigval[eigval<0] = 0
     #L = np.sqrt(eigval[...,np.newaxis,:]) * eigvec

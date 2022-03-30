@@ -27,9 +27,9 @@ If you end up using the directed spectrum in your research, please cite that ref
 ## Use ##
 This package has one public function: `ds`
 ```python
-ds(X, f_samp, groups=None, pairwise=False, f_res=None, return_onesided=False,
-       estimator='Wilson', max_iter=1000, tol=1e-6, order='aie', window='hann',
-       nperseg=None, noverlap=None):
+ds(X, f_samp, groups=None, pairwise=False, f_res=None,
+       return_onesided=False, estimator='Wilson', order='aic', max_iter=1000,
+       tol=1e-6,  window='hann', nperseg=None, noverlap=None):
 ```
 ##### Parameters #####
 * `X` : numpy.ndarray, shape (n_windows, n_channels, n_timepoints)  
@@ -64,6 +64,10 @@ ds(X, f_samp, groups=None, pairwise=False, f_res=None, return_onesided=False,
         Wilson's spectral factorization of the data cross-spectral
         density matrix. 'AR' fits an autoregressive model to the data.
         Defaults to 'Wilson'.
+* `order` : int or 'aic', optional  
+        Autoregressive model order. If 'aic', used Akaike Information
+        Criterion to automatically determine model order. Used only when
+        estimator is 'AR'. Defaults to 'aic'.
 * `max_iter` : int, optional  
         Max number of Wilson factorization iterations. If factorization
         does not converge before reaching this value, directed spectrum
@@ -72,10 +76,6 @@ ds(X, f_samp, groups=None, pairwise=False, f_res=None, return_onesided=False,
 * `tol` : float, optional  
         Wilson factorization convergence tolerance value. Used only when
         estimator is 'Wilson'. Defaults to 1e-6.
-* `order` : int or 'aic', optional  
-        Autoregressive model order. If 'aic', used Akaike Information
-        Criterion to automatically determine model order. Used only when
-        estimator is 'AR'. Defaults to 'aic'.
 * `window` : str or tuple or array_like, optional  
         Desired window to use. If `window` is a string or tuple, it is
         passed to `get_window` to generate the window values, which are
