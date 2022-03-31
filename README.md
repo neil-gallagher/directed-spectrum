@@ -28,8 +28,9 @@ If you end up using the directed spectrum in your research, please cite that ref
 This package has one public function: `ds`
 ```python
 ds(X, f_samp, groups=None, pairwise=False, f_res=None,
-       return_onesided=False, estimator='Wilson', order='aic', max_iter=1000,
-       tol=1e-6,  window='hann', nperseg=None, noverlap=None):
+       return_onesided=False, estimator='Wilson',
+       order='aic', max_ord=50, ord_est_epochs=30,
+       max_iter=1000, tol=1e-6, window='hann', nperseg=None, noverlap=None):
 ```
 ##### Parameters #####
 * `X` : numpy.ndarray, shape (n_windows, n_channels, n_timepoints)  
@@ -53,8 +54,9 @@ ds(X, f_samp, groups=None, pairwise=False, f_res=None,
 * `f_res` : float, optional  
         Frequency resolution of the calculated spectrum. For example, if
         set to 1, then the directed spectrum will be calculated for
-        integer frequency values. If set to 'None' (the default), then
-        the frequency resolution will be fs/nperseg.
+        integer frequency values. If set to 'None' (default), then
+        the frequency resolution will be f_samp/nperseg if estimator is
+        'Wilson' or f_samp/X.shape[0] if 'AR'.
 * `return_onesided` : bool, optional  
         If True, return a one-sided spectrum. If False return a
         two-sided spectrum. Must be False if the input timeseries is
@@ -68,6 +70,13 @@ ds(X, f_samp, groups=None, pairwise=False, f_res=None,
         Autoregressive model order. If 'aic', used Akaike Information
         Criterion to automatically determine model order. Used only when
         estimator is 'AR'. Defaults to 'aic'.
+* `max_ord` : int, optional
+        Maximum autoregressive model order. Only used when estimaotr is
+        'AR' and order is 'aic'. Default is 50.
+* `ord_est_epochs` : int, optional
+        Number of epochs to sample from full dataset for estimating
+        model order. Only used when estimator is 'AR' and order is
+        'aic'. Default is 30.
 * `max_iter` : int, optional  
         Max number of Wilson factorization iterations. If factorization
         does not converge before reaching this value, directed spectrum
@@ -95,7 +104,9 @@ ds(X, f_samp, groups=None, pairwise=False, f_res=None,
         copied directly from the scipy.signal.spectral module. These
         variables are used for calculating the cross power spectral density
         matrix as an intermediate step in calculating the directed spectrum 
-        when estimator is 'Wilson', and are not used otherwise.]*
+        when estimator is 'Wilson' or to calculate power spectral density
+        when estimator is 'AR' and pairwise is True, and are not used
+        otherwise.]*
 
 
 `ds` returns a `DirectedSpectrum` object.

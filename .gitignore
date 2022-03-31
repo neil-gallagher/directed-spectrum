@@ -3,3 +3,12 @@
 # ignore python stuff
 *.egg-info/
 __pycache__/
+
+# ignore notebooks
+.ipynb_checkpoints
+
+# ignore backups
+*~
+
+# ignore macOS files
+.DS_Store
