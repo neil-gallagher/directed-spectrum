@@ -11,7 +11,7 @@ ds : Return a DirectedSpectrum object for multi-channel timeseries data.
 Author:  Neil Gallagher
 Modified by:  Billy Carson, Neil Gallagher
 Date written:    8-27-2021
-Last modified:  3-29-2022
+Last modified:  4-1-2022
 """
 from itertools import combinations
 from warnings import warn
@@ -410,13 +410,15 @@ def _fit_var(X, order, max_ord, ord_est_epochs, print_ord=True):
         max_ord = min(max_ord, n_samps-1)
         for o in range(max_ord):
             order = o+1
-            A, Sigma, bad_epoch = _fit_var_helper(samp_X, order)
+            # return biased ML estimate of sigma for AIC formula
+            A, Sigma, bad_epoch = _fit_var_helper(samp_X, order,
+                                                  sigma_biased=True)
             n_params = A.size/ord_est_epochs
             n_obs = n_samps - order
-            sign, nll = np.linalg.slogdet(Sigma)
+            sign, logdetsig = np.linalg.slogdet(Sigma)
             # if sign is 0, Sigma is singular, so model is unstable
-            nll[sign==0] = np.nan
-            aic[o] = nll + 2*n_params/(n_obs-n_params-1)
+            logdetsig[sign==0] = np.nan
+            aic[o] = logdetsig + 2*n_params/(n_obs-n_params-1)
 
         try:
             order = np.nanargmin(aic.max(axis=1)) + 1
@@ -609,7 +611,7 @@ def _calc_nfft(f_samp, f_res):
     return nfft
 
 
-def _fit_var_helper(X, order):
+def _fit_var_helper(X, order, sigma_biased=False):
     # parse X into unlagged (dependent) and lagged (independent) components
     X_unlag = X[..., order:].swapaxes(1,2)
     n_epochs, n_samps, n_signals = X_unlag.shape
@@ -630,7 +632,8 @@ def _fit_var_helper(X, order):
         # lstsq expects n_samps as first dim, so transpose axes
         A[e], _,_,_ = np.linalg.lstsq(X_lag[e], X_unlag[e], rcond=None)
         resid = X_unlag[e] - X_lag[e]@A[e]
-        Sigma[e] = np.cov(resid, rowvar=False)
+        Sigma[e] = np.cov(resid, rowvar=False, bias=sigma_biased)
+            
     # reshape A so that X[...,t] = Sum_p A[:,p] X[...,t-p]
     A = A.reshape((n_epochs, n_signals, order, n_signals)).transpose((0,2,3,1))
 
