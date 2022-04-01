@@ -163,7 +163,7 @@ def ds(X, f_samp, groups=None, pairwise=False, f_res=None,
     G = len(group_list)
     group_pairs = combinations(range(G), 2)
     
-    nfft = _calc_nfft(f_samp, f_res)
+    nfft, nperseg = _calc_nfft(f_samp, f_res, nperseg)
     
     estimator = estimator.lower()
     if estimator == 'wilson':
@@ -600,7 +600,7 @@ def _group_indicies(groups):
     return (group_idx, group_list)
 
 
-def _calc_nfft(f_samp, f_res):
+def _calc_nfft(f_samp, f_res, nperseg):
     """Calculate window length for fft"""
     # if frequency resolution is set, use it to determine fft length.
     if f_res:
@@ -608,7 +608,13 @@ def _calc_nfft(f_samp, f_res):
     else:
         # set to None to use default
         nfft = None
-    return nfft
+        
+    # if nperseg is unset, set it to nfft, which prevents undesired
+    # behavior in csd/welch
+    if not nperseg:
+        nperseg = nfft
+        
+    return (nfft, nperseg)
 
 
 def _fit_var_helper(X, order, sigma_biased=False):
