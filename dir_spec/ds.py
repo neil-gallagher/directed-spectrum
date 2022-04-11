@@ -18,6 +18,7 @@ from warnings import warn
 import numpy as np
 from scipy.signal import csd, welch
 from scipy.fft import fft, ifft
+from scipy.linalg import lstsq, inv
 from numpy.linalg import cholesky, solve
 
 
@@ -463,7 +464,15 @@ def _var_to_transfer(A, nfft):
                              (A.shape[0], 1, A.shape[2], A.shape[3]))
     ia = np.concatenate((id_mat, -A), axis=1)
     iaf = fft(ia, nfft, axis=1)
-    H = np.linalg.inv(iaf)
+
+    # invert iaf to get H, checking for nans in iaf
+    H = np.zeros_like(iaf)
+    for k in range(iaf.shape[0]):
+        for l in range(iaf.shape[1]):
+            if np.any(np.isnan(iaf[k,l])):
+                H[k,l] = np.nan
+            else:
+                H[k,l] = inv(iaf[k,l], check_finite=False, overwrite_a=True)    
     return H
 
 
@@ -634,9 +643,10 @@ def _fit_var_helper(X, order, sigma_biased=False):
     # solve VAR model via least squares
     A = np.full((n_epochs, n_signals*order, n_signals), np.nan)
     Sigma = np.full((n_epochs, n_signals, n_signals), np.nan)
+    
     for e in range(n_epochs):
         # lstsq expects n_samps as first dim, so transpose axes
-        A[e], _,_,_ = np.linalg.lstsq(X_lag[e], X_unlag[e], rcond=None)
+        A[e], _,_,_ = lstsq(X_lag[e], X_unlag[e], cond=None, lapack_driver='gelsy')
         resid = X_unlag[e] - X_lag[e]@A[e]
         Sigma[e] = np.cov(resid, rowvar=False, bias=sigma_biased)
             
@@ -659,7 +669,6 @@ def _check_specrad(A):
                                                     n_signals*(order-1))))),
                                (n_epochs, n_signals*order, n_signals*(order-1)))
     var_mat = np.concatenate((var_mat1, var_mat2), axis=2)
-
     specrad = abs(np.linalg.eigvals(var_mat)).max(axis=1)
     return (specrad >=1)
 
