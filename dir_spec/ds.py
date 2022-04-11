@@ -11,7 +11,7 @@ ds : Return a DirectedSpectrum object for multi-channel timeseries data.
 Author:  Neil Gallagher
 Modified by:  Billy Carson, Neil Gallagher
 Date written:    8-27-2021
-Last modified:  4-1-2022
+Last modified:  4-11-2022
 """
 from itertools import combinations
 from warnings import warn
@@ -20,6 +20,7 @@ from scipy.signal import csd, welch
 from scipy.fft import fft, ifft
 from scipy.linalg import lstsq, inv
 from numpy.linalg import cholesky, solve
+from joblib import Parallel, delayed
 
 
 class DirectedSpectrum(object):
@@ -56,7 +57,7 @@ class DirectedSpectrum(object):
 
 def ds(X, f_samp, groups=None, pairwise=False, f_res=None,
        return_onesided=False, estimator='Wilson',
-       order='aic', max_ord=50, ord_est_epochs=30,
+       order='aic', max_ord=50, ord_est_epochs=30, n_jobs=None,
        max_iter=1000, tol=1e-6, window='hann', nperseg=None, noverlap=None):
     """Returns a DirectedSpectrum object calculated from data X.
 
@@ -113,6 +114,12 @@ def ds(X, f_samp, groups=None, pairwise=False, f_res=None,
         Number of epochs to sample from full dataset for estimating
         model order. Only used when estimator is 'AR' and order is
         'aic'. Default is 30.
+    n_jobs : int, optional
+        Maximum number of jobs to use for parallel calculation of AIC.
+        Only used when order is 'aic'. If set to 1, parallel computing
+        is not used. Default is None, which is interpreted as 1 unless
+        the call is performed under a parallel_backend context manager
+        that sets another value for n_jobs.
     max_iter : int, optional
         Max number of Wilson factorization iterations. If factorization
         does not converge before reaching this value, directed spectrum
@@ -164,7 +171,7 @@ def ds(X, f_samp, groups=None, pairwise=False, f_res=None,
     G = len(group_list)
     group_pairs = combinations(range(G), 2)
     
-    nfft, nperseg = _calc_nfft(f_samp, f_res, nperseg)
+    nfft, nperseg = _calc_nfft(f_samp, f_res, nperseg, window)
     
     estimator = estimator.lower()
     if estimator == 'wilson':
@@ -173,7 +180,7 @@ def ds(X, f_samp, groups=None, pairwise=False, f_res=None,
             H, Sigma = _wilson_factorize(cpsd, f_samp, max_iter, tol)
     elif estimator == 'ar':
         if not pairwise:
-            A, Sigma = _fit_var(X, order, max_ord, ord_est_epochs)
+            A, Sigma = _fit_var(X, order, max_ord, ord_est_epochs, n_jobs)
             H = _var_to_transfer(A, nfft)       
     else:
         raise ValueError(f'Unsupported value for parameter \'estimator\':'
@@ -211,7 +218,8 @@ def ds(X, f_samp, groups=None, pairwise=False, f_res=None,
                 H, Sigma = _wilson_factorize(sub_cpsd, f_samp, max_iter, tol)
             else: # AR model estimation
                 sub_X = X.take(pair_idx, axis=1)
-                A, Sigma = _fit_var(sub_X, order, max_ord, ord_est_epochs, print_ord=False)
+                A, Sigma = _fit_var(sub_X, order, max_ord, ord_est_epochs,
+                                    n_jobs, print_ord=False)
                 H = _var_to_transfer(A, nfft)
 
             ds01, ds10 = _var_to_ds(H, Sigma, sub_idx1)
@@ -361,7 +369,7 @@ def _wilson_factorize(cpsd, f_samp, max_iter, tol, eps_multiplier=100):
     return (H, Sigma)
 
 
-def _fit_var(X, order, max_ord, ord_est_epochs, print_ord=True):
+def _fit_var(X, order, max_ord, ord_est_epochs, n_jobs, print_ord=True):
     """Fit vector autoregressive model to data.
 
     Parameters
@@ -381,6 +389,12 @@ def _fit_var(X, order, max_ord, ord_est_epochs, print_ord=True):
     ord_est_epochs : int, optional
         Number of epochs to sample from full dataset for estimating
         model order. Only used when order is 'aic'. Default is 30.
+    n_jobs : int, optional
+        Maximum number of jobs to use for parallel calculation of AIC.
+        Only used when order is 'aic'. If set to 1, parallel computing
+        is not used. Default is None, which is interpreted as 1 unless
+        the call is performed under a parallel_backend context manager
+        that sets another value for n_jobs.
     print_ord: bool, optional
         Indicates whether to print chosen order when order is 'aic'.
         Defaults to True.
@@ -409,18 +423,11 @@ def _fit_var(X, order, max_ord, ord_est_epochs, print_ord=True):
 
         aic = np.zeros((max_ord, ord_est_epochs))
         max_ord = min(max_ord, n_samps-1)
-        for o in range(max_ord):
-            order = o+1
-            # return biased ML estimate of sigma for AIC formula
-            A, Sigma, bad_epoch = _fit_var_helper(samp_X, order,
-                                                  sigma_biased=True)
-            n_params = A.size/ord_est_epochs
-            n_obs = n_samps - order
-            sign, logdetsig = np.linalg.slogdet(Sigma)
-            # if sign is 0, Sigma is singular, so model is unstable
-            logdetsig[sign==0] = np.nan
-            aic[o] = logdetsig + 2*n_params/(n_obs-n_params-1)
-
+        aic = Parallel(n_jobs=n_jobs)(
+                       delayed(_calc_aic)(o, samp_X, ord_est_epochs)
+                                          for o in range(max_ord))
+        aic = np.asarray(aic)
+        
         try:
             order = np.nanargmin(aic.max(axis=1)) + 1
         except ValueError:
@@ -441,6 +448,20 @@ def _fit_var(X, order, max_ord, ord_est_epochs, print_ord=True):
              'pairwise=False.')
 
     return (A, Sigma)
+
+
+def _calc_aic(o, samp_X, ord_est_epochs):
+    order = o+1
+    # return biased ML estimate of sigma for AIC formula
+    A, Sigma, bad_epoch = _fit_var_helper(samp_X, order,
+                                          sigma_biased=True)
+    n_params = A.size/ord_est_epochs
+    n_obs = samp_X.shape[2] - order
+    sign, logdetsig = np.linalg.slogdet(Sigma)
+    # if sign is 0, Sigma is singular, so model is unstable
+    logdetsig[sign==0] = np.nan
+    aic = logdetsig + 2*n_params/(n_obs-n_params-1)
+    return aic
 
 
 def _var_to_transfer(A, nfft):
@@ -472,7 +493,7 @@ def _var_to_transfer(A, nfft):
             if np.any(np.isnan(iaf[k,l])):
                 H[k,l] = np.nan
             else:
-                H[k,l] = inv(iaf[k,l], check_finite=False, overwrite_a=True)    
+                H[k,l] = inv(iaf[k,l], check_finite=False, overwrite_a=True)
     return H
 
 
@@ -609,7 +630,7 @@ def _group_indicies(groups):
     return (group_idx, group_list)
 
 
-def _calc_nfft(f_samp, f_res, nperseg):
+def _calc_nfft(f_samp, f_res, nperseg, window):
     """Calculate window length for fft"""
     # if frequency resolution is set, use it to determine fft length.
     if f_res:
@@ -618,6 +639,10 @@ def _calc_nfft(f_samp, f_res, nperseg):
         # set to None to use default
         nfft = None
         
+    # check if window is an array, which should define nperseg
+    if np.ndim(window) == 1:
+        nperseg = len(window)
+    
     # if nperseg is unset, set it to nfft, which prevents undesired
     # behavior in csd/welch
     if not nperseg:
