@@ -3,6 +3,16 @@
 # ignore backups
 *~
 
-*.egg-info
-build
-*/__pycache__
+# ignore python stuff
+*.egg-info/
+__pycache__/
+build/
+
+# ignore notebooks
+.ipynb_checkpoints
+
+# ignore backups
+*~
+
+# ignore macOS files
+.DS_Store
