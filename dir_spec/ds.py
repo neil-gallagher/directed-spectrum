@@ -11,9 +11,10 @@ ds : Return a DirectedSpectrum object for multi-channel timeseries data.
 Author:  Neil Gallagher
 Modified by:  Billy Carson, Neil Gallagher
 Date written:    8-27-2021
-Last modified:  4-11-2022
+Last modified:  4-14-2022
 """
 from itertools import combinations
+import warnings
 from warnings import warn
 import numpy as np
 from scipy.signal import csd, welch
@@ -57,7 +58,7 @@ class DirectedSpectrum(object):
 
 def ds(X, f_samp, groups=None, pairwise=False, f_res=None,
        return_onesided=False, estimator='Wilson',
-       order='aic', max_ord=50, ord_est_epochs=30, n_jobs=None,
+       order='aic', max_ord=50, ord_est_epochs=20, n_jobs=None,
        max_iter=1000, tol=1e-6, window='hann', nperseg=None, noverlap=None):
     """Returns a DirectedSpectrum object calculated from data X.
 
@@ -93,7 +94,9 @@ def ds(X, f_samp, groups=None, pairwise=False, f_res=None,
         set to 1, then the directed spectrum will be calculated for
         integer frequency values. If set to 'None' (default), then
         the frequency resolution will be f_samp/nperseg if estimator is
-        'Wilson' or f_samp/X.shape[0] if 'AR'.
+        'Wilson' or f_samp/order if estimator is 'AR' and pairwise is
+        False. f_res must be set if estimator is 'AR' and pairwise is
+        True.
     return_onesided : bool, optional
         If True, return a one-sided spectrum. If False return a
         two-sided spectrum. Must be False if the input timeseries is
@@ -113,7 +116,8 @@ def ds(X, f_samp, groups=None, pairwise=False, f_res=None,
     ord_est_epochs : int, optional
         Number of epochs to sample from full dataset for estimating
         model order. Only used when estimator is 'AR' and order is
-        'aic'. Default is 30.
+        'aic'. The highest AIC value from all sampled windows is used
+        to select the model order. Default is 20.
     n_jobs : int, optional
         Maximum number of jobs to use for parallel calculation of AIC.
         Only used when order is 'aic'. If set to 1, parallel computing
@@ -423,9 +427,12 @@ def _fit_var(X, order, max_ord, ord_est_epochs, n_jobs, print_ord=True):
 
         aic = np.zeros((max_ord, ord_est_epochs))
         max_ord = min(max_ord, n_samps-1)
-        aic = Parallel(n_jobs=n_jobs)(
-                       delayed(_calc_aic)(o, samp_X, ord_est_epochs)
-                                          for o in range(max_ord))
+        with warnings.catch_warnings():
+            # ignore warnings due to poorly conditioned sample windows
+            warnings.simplefilter("ignore")
+            aic = Parallel(n_jobs=n_jobs)(
+                           delayed(_calc_aic)(o, samp_X, ord_est_epochs)
+                                              for o in range(max_ord))
         aic = np.asarray(aic)
         
         try:
@@ -441,7 +448,7 @@ def _fit_var(X, order, max_ord, ord_est_epochs, n_jobs, print_ord=True):
 
     A, Sigma, bad_epoch = _fit_var_helper(X, order)
     if np.any(bad_epoch):
-        warn('VAR model of data is not stable for at least one epoch '
+        warn('VAR model of data is not stpyable for at least one epoch '
              '(spectral radius > 1); directed spectrum values for these'
              ' epcohs will be set to NaN. Try preprocssing your data '
              'differently to increase stationarity, or setting '

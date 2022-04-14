@@ -3,6 +3,7 @@
 # ignore python stuff
 *.egg-info/
 __pycache__/
+build/
 
 # ignore notebooks
 .ipynb_checkpoints

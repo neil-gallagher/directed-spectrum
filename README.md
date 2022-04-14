@@ -56,7 +56,9 @@ ds(X, f_samp, groups=None, pairwise=False, f_res=None,
         set to 1, then the directed spectrum will be calculated for
         integer frequency values. If set to 'None' (default), then
         the frequency resolution will be f_samp/nperseg if estimator is
-        'Wilson' or f_samp/X.shape[0] if 'AR'.
+        'Wilson' or f_samp/order if estimator is 'AR' and pairwise is
+        False. f_res must be set if estimator is 'AR' and pairwise is
+        True.
 * `return_onesided` : bool, optional  
         If True, return a one-sided spectrum. If False return a
         two-sided spectrum. Must be False if the input timeseries is
@@ -71,12 +73,13 @@ ds(X, f_samp, groups=None, pairwise=False, f_res=None,
         Criterion to automatically determine model order. Used only when
         estimator is 'AR'. Defaults to 'aic'.
 * `max_ord` : int, optional
-        Maximum autoregressive model order. Only used when estimaotr is
+        Maximum autoregressive model order. Only used when estimator is
         'AR' and order is 'aic'. Default is 50.
 * `ord_est_epochs` : int, optional
         Number of epochs to sample from full dataset for estimating
         model order. Only used when estimator is 'AR' and order is
-        'aic'. Default is 30.
+        'aic'. The highest AIC value from all sampled epochs is used
+        to select the model order. Default is 20.
 * `max_iter` : int, optional  
         Max number of Wilson factorization iterations. If factorization
         does not converge before reaching this value, directed spectrum
