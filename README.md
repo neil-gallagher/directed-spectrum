@@ -21,8 +21,10 @@ These properties of the directed spectrum also extend to other applications wher
 The `ds` function within the `ds` module takes 2 required parameters, in addition to several optional parameters, and returns an object of the `DirectedSpectrum` class.
 
 For more information on the directed spectrum please see the [associated publication](https://proceedings.neurips.cc/paper/2021/hash/3d36c07721a0a5a96436d6c536a132ec-Abstract.html):  
-Gallagher, N., Dzirasa, K. & Carlson, D. (2021). Directed Spectral Measures Improve Latent Network Models Of Neural Populations. *Advances in Neural Information Processing Systems 35*.
+Gallagher, N., Dzirasa, K. & Carlson, D. (2021). Directed Spectral Measures Improve Latent Network Models Of Neural Populations. *Advances in Neural Information Processing Systems 35*.  
 If you end up using the directed spectrum in your research, please cite that reference.
+
+The supplementary code for the publication listed above is included in this repository as 'DS_supplemental_code.zip'.
 
 ## Use ##
 This package has one public function: `ds`
