@@ -9,6 +9,7 @@ from sklearn.decomposition import NMF
 directed_spectrum = ds(neural_data, sampling_frequency, channel_names)
 
 # format ds array for NMF
+directed_spectrum.normalize() # useful if different gains between channels
 X = directed_spectrum.ds_array
 X = X.reshape((X.shape[0], -1))
 
@@ -114,11 +115,11 @@ ds(X, f_samp, groups=None, pairwise=False, f_res=None,
         otherwise.]*
 
 
-`ds` returns a `DirectedSpectrum` object.
+### `ds` returns a `DirectedSpectrum` object. ###
 ```python
-DirectedSpectrum(ds_array, f, cgroups)
+DirectedSpectrum(ds_array, f, cgroups, params)
 ```
-##### Attributes #####
+#### Attributes ####
 * `ds_array` : ndarray, shape (n_windows, n_frequencies, n_groups, n_groups)  
         Directed spectrum values between each pair of channels/groups 
         for each frequency and window. Axis 2 corresponds to the source 
@@ -134,3 +135,38 @@ DirectedSpectrum(ds_array, f, cgroups)
         Frequencies associated with axis 1 of ds_array.
 * `groups` : ndarray of strings, shape (n_groups)  
         Names the channels/groups associated with ds_array.
+* `params` : dictionary
+        Contains the parameters that were used to calculate the values in
+        ds_array.
+
+#### Methods ####
+```python
+normalize(norm_type=('channels', 'diagonals', 'frequency'))
+```
+Normalize values in ds_array for various use cases.
+
+##### Parameters #####
+
+`norm_type` : one of {'channels', 'diagonals', 'frequency'} or tuple
+                containing a combination of those strings
+                default = ('channels', 'diagonals', 'frequency')
+        
+if 'channels':
+        Normalizes values within each target channel separately.
+        This is typically only appropriate when you expect that
+        channels have different amplitudes.
+
+if 'diagonals': 
+        Normalizes values with the same source and target channel
+        separately from those with different source and target. If
+        you are using pairwise DS, it is suggested to use this
+        form of normalization, as the 'diagonal' term are
+        populated with power spectrum values instead of DS and
+        this normalization is required in order for variances to
+        be comparable between the two data types.
+
+if 'frequency':
+        Normalizes each values at each frequency separately. This
+        is appropriate for something like electrophysiology data,
+        where you expect higher frequencies to have lower
+        amplitudes, but want them to be weighted equally.

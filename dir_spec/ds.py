@@ -23,6 +23,7 @@ from scipy.linalg import lstsq, inv
 from numpy.linalg import cholesky, solve
 from joblib import Parallel, delayed
 
+from pdb import set_trace
 
 class DirectedSpectrum(object):
     """Directed Spectrum object definition.
@@ -47,13 +48,150 @@ class DirectedSpectrum(object):
     groups : ndarray of strings
         shape (n_groups)
         Names the channels/groups associated with ds_array.
+    params : dictionary
+        Contains the parameters that were used to calculate the values in
+        ds_array.
+
+    Methods
+    -------
+    normalize : Normalize values in ds_array.
     """
 
-    def __init__(self, ds_array, f, groups):
+    def __init__(self, ds_array, f, groups, params=None):
         # Assign attributes
         self.ds_array = np.array(ds_array, dtype=np.float64)
         self.f = f
         self.groups = groups
+        if params:
+            self.params = params
+
+    def normalize(self, norm_type=('channels', 'diagonals', 'frequency')):
+        """Normalize values in ds_array for various use cases.
+
+        Parameters
+        ----------
+        norm_type : one of {'channels', 'diagonals', 'frequency'} or tuple
+                    containing a combination of those strings
+                    default = ('channels', 'diagonals', 'frequency')
+            if 'channels':
+                Normalizes values within each target channel separately.
+                This is typically only appropriate when you expect that
+                channels have different amplitudes.
+            if 'diagonals': 
+                Normalizes values with the same source and target channel
+                separately from those with different source and target. If
+                you are using pairwise DS, it is suggested to use this
+                form of normalization, as the 'diagonal' terms are
+                populated with power spectrum values instead of DS and
+                this normalization is required in order for variances to
+                be comparable between the two data types.
+            if 'frequency':
+                Normalizes each values at each frequency separately. This
+                is appropriate for something like electrophysiology data,
+                where you expect higher frequencies to have lower
+                amplitudes, but want them to be weighted equally.
+        """
+        if not hasattr(self, 'params'):
+            raise AttributeError('normalize method is not defined if the '
+                                 'params attribute is not set')
+        
+        # define root mean square function
+        rms = lambda arr : np.sqrt(np.mean(arr**2))
+
+        # get list of indices to normalize together based on norm_type
+        n_freqs, n_chans = self.ds_array.shape[-3:-1]
+        norm_list = [np.full((n_freqs, n_chans), True)]
+        if 'frequency' in norm_type:
+            norm_list = self._split_norm_list(norm_list, axis=0)
+        if 'channels' in norm_type:
+            norm_list = self._split_norm_list(norm_list, axis=1)
+
+        if 'diagonals' in norm_type:
+            # normalize diagonals
+            diag_idx = np.diag_indices(n_chans)
+            diags = self.ds_array[..., diag_idx[0], diag_idx[1]]
+            for n_mask in norm_list:
+                norm_fact = rms(diags[:, n_mask])
+                diags[:, n_mask] /= norm_fact
+            self.ds_array[..., diag_idx[0], diag_idx[1]] = diags
+
+            # sum non-diagonals to get non-self-directed power spectrum,
+            # then normalize to balance w/ diagonals
+            pow_spec = self._sum_col(include_diags=False)
+            pow_spec /= n_chans - 1
+
+            # normalize non-diagonals
+            nondiags = self._get_nondiags()
+            for n_mask in norm_list:
+                n_idx = np.nonzero(n_mask)
+                norm_fact = rms(pow_spec[:, n_idx[0],n_idx[1]])
+                nondiags[:,n_idx[0],:,n_idx[1]] /= norm_fact
+
+            self._set_nondiags(nondiags)
+            return
+
+        elif self.params['pairwise']:
+            warn('norm_type does not contain diagonals option; this is not'
+                 ' recommended for pairwise directed spectrum!')
+            # extract power spectrum from diagonals
+            pow_spec = self.ds_array[..., np.diag_indices(n_chans)]
+        else:
+            # sum columns to estimate power spectrum for each target
+            pow_spec = self._sum_col()
+
+        # loop through each set of indices and normalize
+        for n_mask in norm_list:
+            norm_fact = rms(pow_spec[:, n_mask]) / n_chans
+            n_idx = np.nonzero(n_mask)
+            self.ds_array[:,n_idx[0],:,n_idx[1]] /= norm_fact
+
+
+    def _set_nondiags(self, nondiag_vals):
+        """Set 'nondiagonal' channel pair elements """
+        n_chans = nondiag_vals.shape[-1]
+        nondiag_idx = ~np.eye(n_chans, dtype=bool)
+        for c in range(n_chans):
+            self.ds_array[...,nondiag_idx[:,c], c] = nondiag_vals[...,c]
+
+
+    def _get_nondiags(self):
+        """Get 'nondiagonal' channel pair elements """
+        n_win, n_freqs, n_chans = self.ds_array.shape[:3]
+        nondiag_idx = ~np.eye(n_chans, dtype=bool)
+
+        # transpose target/source to simplify extraction
+        ds_arr = self.ds_array.copy().transpose(0,1,3,2)
+        nondiags = ds_arr[...,nondiag_idx]
+        nondiags = nondiags.reshape((n_win, n_freqs, n_chans, n_chans-1)
+                                   ).transpose(0,1,3,2)
+        return nondiags
+
+    def _split_norm_list(self, norm_list, axis):
+        """ Split a list of normalization indices along an axis. """
+        new_norm_list = []
+        arr_shape = norm_list[0].shape
+        for norm_idx in norm_list:
+            for k in range(arr_shape[axis]):
+                this_norm = np.full(arr_shape, False)
+                this_vals = norm_idx.take(indices=k, axis=axis)
+                if axis == 0:
+                    this_norm[k,:] = this_vals
+                if axis == 1:
+                    this_norm[:,k] = this_vals
+                new_norm_list.append(this_norm)
+        return new_norm_list
+
+
+    def _sum_col(self, include_diags=True):
+        """ Returns the sum of spectrums with the same target channel. """
+        if include_diags:
+            return self.ds_array.sum(axis=-2)
+        else:
+            arr_copy = self.ds_array.copy()
+            n_chans = arr_copy.shape[-1]
+            diag_idx = np.diag_indices(n_chans)
+            arr_copy[..., diag_idx[0], diag_idx[1]] = 0
+            return arr_copy.sum(axis=-2)
 
 
 def ds(X, f_samp, groups=None, pairwise=False, f_res=None,
@@ -157,6 +295,9 @@ def ds(X, f_samp, groups=None, pairwise=False, f_res=None,
     -------
     dir_spec : DirectedSpectrum object
     """
+    # store non-data parameters for saving later
+    param_dict = locals().copy()
+    param_dict.pop('X')
 
     # Check if time series array has appropriate number of dimensions/axes
     # Raise error if time series data does not have enough dimensions
@@ -285,7 +426,7 @@ def ds(X, f_samp, groups=None, pairwise=False, f_res=None,
             ds_array[:, nyquist] *= 2
         f = np.abs(f[:(nyquist+1)])
 
-    return DirectedSpectrum(ds_array, f, group_list)
+    return DirectedSpectrum(ds_array, f, group_list, param_dict)
 
 
 def _wilson_factorize(cpsd, f_samp, max_iter, tol, eps_multiplier=100):

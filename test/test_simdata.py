@@ -7,7 +7,7 @@ DATA_FILE = 'test_data.npz'
 N_CHANS = 5
 
 
-def test_wsf(plot=False):
+def test_wsf(plot=False, norm=None):
     """Test DS estimation via Wilson spectral factorization."""
     X, area, fs = _load_data()
     start = process_time()
@@ -16,11 +16,16 @@ def test_wsf(plot=False):
     print(f'WSF DS: {end-start:.3g}s elapsed')
     
     _check_signal_properties(wsf_ds)
+
+    # test normalization
+    if norm:
+        wsf_ds.normalize(norm)
+        _test_norm(wsf_ds, norm)
     
     if plot:
         _plot_avg_ds(wsf_ds, title='WSF DS')
     
-def test_var(plot=False):
+def test_var(plot=False, norm=None):
     """Test DS estimation via vector autoregressive modeling."""
     X, area, fs = _load_data()
     start = process_time()
@@ -34,12 +39,17 @@ def test_var(plot=False):
           'unstable VAR model')
     
     _check_signal_properties(var_ds)
+
+    # test normalization
+    if norm:
+        var_ds.normalize(norm)
+        _test_norm(var_ds, norm)
     
     if plot:
         _plot_avg_ds(var_ds, title='VAR DS')
     
     
-def test_wsf_pds(plot=False):
+def test_wsf_pds(plot=False, norm=None):
     """Test PDS estimation via Wilson spectral factorization."""
     X, area, fs = _load_data()
     start = process_time()
@@ -50,10 +60,14 @@ def test_wsf_pds(plot=False):
     
     _check_signal_properties(wsf_ds)
 
+    if norm:
+        wsf_ds.normalize(norm)
+        _test_norm(wsf_ds, norm)
+
     if plot:
         _plot_avg_ds(wsf_ds, title='WSF PDS')
     
-def test_var_pds(plot=False):
+def test_var_pds(plot=False, norm=None):
     """Test PDS estimation via vector autoregressive modeling."""
     X, area, fs = _load_data()
     start = process_time()
@@ -67,6 +81,10 @@ def test_var_pds(plot=False):
           'unstable VAR model')
     
     _check_signal_properties(var_ds)
+
+    if norm:
+        var_ds.normalize()
+        _test_norm(var_ds, norm)
         
     if plot:
         _plot_avg_ds(var_ds, title='VAR PDS')
@@ -128,8 +146,58 @@ def _band_power(mean_ds, f, center, bandwidth=2):
     return mean_ds[f_idx].sum(axis=0)
         
     
+def _test_norm(ds_obj, norm_type):
+    # define root mean square function
+    rms = lambda arr : np.sqrt(np.mean(arr**2))
+
+    # get list of indices to normalize together based on norm_type
+    n_freqs, n_chans = ds_obj.ds_array.shape[-3:-1]
+    norm_list = [np.full((n_freqs, n_chans), True)]
+    if 'frequency' in norm_type:
+        norm_list = ds_obj._split_norm_list(norm_list, axis=0)
+    if 'channels' in norm_type:
+        norm_list = ds_obj._split_norm_list(norm_list, axis=1)
+
+    if 'diagonals' in norm_type:
+        # normalize diagonals
+        diag_idx = np.diag_indices(n_chans)
+        diags = ds_obj.ds_array[..., diag_idx[0], diag_idx[1]]
+        for n_mask in norm_list:
+            norm_fact = rms(diags[:, n_mask])
+            assert(abs(norm_fact - 1.0) < 1e-6)
+
+        # sum non-diagonals to get non-ds_obj-directed power spectrum,
+        # then normalize to balance w/ diagonals
+        pow_spec = ds_obj._sum_col(include_diags=False)
+        pow_spec /= n_chans - 1
+
+        # normalize non-diagonals
+        nondiags = ds_obj._get_nondiags()
+        for n_mask in norm_list:
+            n_idx = np.nonzero(n_mask)
+            norm_fact = rms(pow_spec[:, n_idx[0],n_idx[1]])
+            assert(abs(norm_fact - 1.0) < 1e-6)
+
+        ds_obj._set_nondiags(nondiags)
+        return
+
+    elif ds_obj.params['pairwise']:
+        warn('norm_type does not contain diagonals option; this is not'
+                ' recommended for pairwise directed spectrum!')
+        # extract power spectrum from diagonals
+        pow_spec = ds_obj.ds_array[..., np.diag_indices(n_chans)]
+    else:
+        # sum columns to estimate power spectrum for each target
+        pow_spec = ds_obj._sum_col()
+
+    # loop through each set of indices and normalize
+    for n_mask in norm_list:
+        norm_fact = rms(pow_spec[:, n_mask])
+        assert(abs(norm_fact - n_chans) < 1e-6)
+
+
 if __name__ == "__main__":
-    test_wsf(plot=True)
-    test_var(plot=True)
-    test_wsf_pds(plot=True)
-    test_var_pds(plot=True)
+    test_wsf(plot=True, norm=('frequency', 'channels'))
+    test_var(plot=True, norm=('channels'))
+    test_wsf_pds(plot=True, norm=('diagonals', 'frequency'))
+    test_var_pds(plot=True, norm=('frequency', 'diagonals', 'channels'))
