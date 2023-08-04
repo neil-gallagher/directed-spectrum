@@ -2,12 +2,13 @@ import numpy as np
 from time import process_time
 from dir_spec.ds import ds
 import matplotlib.pyplot as plt
+from scipy.ndimage import gaussian_filter1d
 
 DATA_FILE = 'test_data.npz'
 N_CHANS = 5
 
 
-def test_wsf(plot=False, norm=None):
+def test_wsf(plot=False, norm=None, fnorm_method=None, sigma=6.):
     """Test DS estimation via Wilson spectral factorization."""
     X, area, fs = _load_data()
     start = process_time()
@@ -19,13 +20,16 @@ def test_wsf(plot=False, norm=None):
 
     # test normalization
     if norm:
-        wsf_ds.normalize(norm)
-        _test_norm(wsf_ds, norm)
+        wsf_ds.normalize(norm, fnorm_method, filter_sd=sigma)
+        if ('frequency' in norm) and (fnorm_method == 'f-inv'):
+            norm = list(norm)
+            norm.remove('frequency')
+        _test_norm(wsf_ds, norm, fnorm_method)
     
     if plot:
         _plot_avg_ds(wsf_ds, title='WSF DS')
     
-def test_var(plot=False, norm=None):
+def test_var(plot=False, norm=None, fnorm_method=None, sigma=6.):
     """Test DS estimation via vector autoregressive modeling."""
     X, area, fs = _load_data()
     start = process_time()
@@ -42,14 +46,17 @@ def test_var(plot=False, norm=None):
 
     # test normalization
     if norm:
-        var_ds.normalize(norm)
-        _test_norm(var_ds, norm)
+        var_ds.normalize(norm, fnorm_method, filter_sd=sigma)
+        if ('frequency' in norm) and (fnorm_method == 'f-inv'):
+            norm = list(norm)
+            norm.remove('frequency')
+        _test_norm(var_ds, norm, fnorm_method)
     
     if plot:
         _plot_avg_ds(var_ds, title='VAR DS')
     
     
-def test_wsf_pds(plot=False, norm=None):
+def test_wsf_pds(plot=False, norm=None, fnorm_method=None, sigma=6.):
     """Test PDS estimation via Wilson spectral factorization."""
     X, area, fs = _load_data()
     start = process_time()
@@ -61,13 +68,16 @@ def test_wsf_pds(plot=False, norm=None):
     _check_signal_properties(wsf_ds)
 
     if norm:
-        wsf_ds.normalize(norm)
-        _test_norm(wsf_ds, norm)
+        wsf_ds.normalize(norm, fnorm_method, filter_sd=sigma)
+        if ('frequency' in norm) and (fnorm_method == 'f-inv'):
+            norm = list(norm)
+            norm.remove('frequency')
+        _test_norm(wsf_ds, norm, fnorm_method)
 
     if plot:
         _plot_avg_ds(wsf_ds, title='WSF PDS')
     
-def test_var_pds(plot=False, norm=None):
+def test_var_pds(plot=False, norm=None, fnorm_method=None, sigma=6.):
     """Test PDS estimation via vector autoregressive modeling."""
     X, area, fs = _load_data()
     start = process_time()
@@ -83,8 +93,11 @@ def test_var_pds(plot=False, norm=None):
     _check_signal_properties(var_ds)
 
     if norm:
-        var_ds.normalize()
-        _test_norm(var_ds, norm)
+        var_ds.normalize(norm, fnorm_method, filter_sd=sigma)
+        if ('frequency' in norm) and (fnorm_method == 'f-inv'):
+            norm = list(norm)
+            norm.remove('frequency')
+        _test_norm(var_ds, norm, fnorm_method)
         
     if plot:
         _plot_avg_ds(var_ds, title='VAR PDS')
@@ -146,7 +159,7 @@ def _band_power(mean_ds, f, center, bandwidth=2):
     return mean_ds[f_idx].sum(axis=0)
         
     
-def _test_norm(ds_obj, norm_type):
+def _test_norm(ds_obj, norm_type, fnorm_method, sigma=6.):
     # define root mean square function
     rms = lambda arr : np.sqrt(np.mean(arr**2))
 
@@ -162,21 +175,40 @@ def _test_norm(ds_obj, norm_type):
         # normalize diagonals
         diag_idx = np.diag_indices(n_chans)
         diags = ds_obj.ds_array[..., diag_idx[0], diag_idx[1]]
+
+        if ('frequency' in norm_type) and (fnorm_method == 'smooth'):
+            diag_smooth = gaussian_filter1d(diags, sigma=sigma, axis=1,
+                                        mode='nearest')
+
         for n_mask in norm_list:
-            norm_fact = rms(diags[:, n_mask])
-            assert(abs(norm_fact - 1.0) < 1e-6)
+            if ('frequency' in norm_type) and (fnorm_method == 'smooth'):
+                # normalization factor is not exact here
+                norm_fact = rms(diag_smooth[:, n_mask])
+                assert((0.2 < norm_fact) and (norm_fact < 5))
+            else:
+                norm_fact = rms(diags[:, n_mask])
+                assert(abs(norm_fact - 1.0) < 1e-6)
 
         # sum non-diagonals to get non-ds_obj-directed power spectrum,
         # then normalize to balance w/ diagonals
         pow_spec = ds_obj._sum_col(include_diags=False)
         pow_spec /= n_chans - 1
 
+        if ('frequency' in norm_type) and (fnorm_method == 'smooth'):
+            pow_spec_smooth = gaussian_filter1d(pow_spec, sigma=sigma, axis=1,
+                                        mode='nearest')
+
         # normalize non-diagonals
         nondiags = ds_obj._get_nondiags()
         for n_mask in norm_list:
             n_idx = np.nonzero(n_mask)
-            norm_fact = rms(pow_spec[:, n_idx[0],n_idx[1]])
-            assert(abs(norm_fact - 1.0) < 1e-6)
+            if ('frequency' in norm_type) and (fnorm_method == 'smooth'):
+                # normalization factor is not exact here
+                norm_fact = rms(pow_spec_smooth[:, n_idx[0],n_idx[1]])
+                assert((0.2 < norm_fact) and (norm_fact < 5))
+            else:
+                norm_fact = rms(pow_spec[:, n_idx[0],n_idx[1]])
+                assert(abs(norm_fact - 1.0) < 1e-6)
 
         ds_obj._set_nondiags(nondiags)
         return
@@ -190,14 +222,28 @@ def _test_norm(ds_obj, norm_type):
         # sum columns to estimate power spectrum for each target
         pow_spec = ds_obj._sum_col()
 
+    if ('frequency' in norm_type) and (fnorm_method == 'smooth'):
+        # apply Gaussian kernel to pow_spec
+        pow_spec_smooth = gaussian_filter1d(pow_spec, sigma=sigma, axis=1,
+                                    mode='nearest')
+
     # loop through each set of indices and normalize
     for n_mask in norm_list:
-        norm_fact = rms(pow_spec[:, n_mask])
-        assert(abs(norm_fact - n_chans) < 1e-6)
+        if ('frequency' in norm_type) and (fnorm_method == 'smooth'):
+            # normalization factor is not exact here
+            norm_fact = rms(pow_spec_smooth[:, n_mask])
+            fact_rat = norm_fact/n_chans
+            assert((0.2 < fact_rat) and (fact_rat < 5))
+        else:
+            norm_fact = rms(pow_spec[:, n_mask])
+            assert(abs(norm_fact - n_chans) < 1e-6)
 
 
 if __name__ == "__main__":
-    test_wsf(plot=True, norm=('frequency', 'channels'))
+    test_wsf(plot=True, norm=('frequency', 'channels'),
+             fnorm_method='smooth')
     test_var(plot=True, norm=('channels'))
-    test_wsf_pds(plot=True, norm=('diagonals', 'frequency'))
-    test_var_pds(plot=True, norm=('frequency', 'diagonals', 'channels'))
+    test_wsf_pds(plot=True, norm=('diagonals', 'frequency'),
+                 fnorm_method=None)
+    test_var_pds(plot=True, norm=('frequency', 'diagonals', 'channels'),
+                 fnorm_method='f-inv')
