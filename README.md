@@ -36,75 +36,75 @@ ds(X, f_samp, groups=None, pairwise=False, f_res=None,
        max_iter=1000, tol=1e-6, window='hann', nperseg=None, noverlap=None):
 ```
 ##### Parameters #####
-* `X` : numpy.ndarray, shape (n_windows, n_channels, n_timepoints)  
+**`X` : numpy.ndarray, shape (n_windows, n_channels, n_timepoints)**  
         Timeseries data from multiple channels. It is assumed that the
         data for each channel are approximately stationary within a window.
-        If a 2-D array is input, it is assumed that n_windows is 1.
-* `f_samp` : float  
-        Sampling rate associated with X.
-* `groups` : list of strings, shape (n_channels), optional  
+        If a 2-D array is input, it is assumed that n_windows is 1.  
+**`f_samp` : float**  
+        Sampling rate associated with X.  
+**`groups` : list of strings, shape (n_channels), optional**  
         To calculate the Directed Spectrum between groups of channels, this
         should list the group associated with each channel. Otherwise, to
         calculate the directed spectrum between each pair of channels, this
         should be a list of channel names. If 'None' (default), then each
-        channel will be given a unique integer index.
-* `pairwise` : bool, optional  
+        channel will be given a unique integer index.  
+**`pairwise` : bool, optional**  
         If 'True', calculate the pairwise directed spectrum
         (i.e. calculate seperately for each pair of groups/channels).
         Otherwise, the non-pairwise directed spectrum will be calculated.
         Note the pairwise directed spectrum is not defined for elements
-        where the source and target are the same.
-* `f_res` : float, optional  
+        where the source and target are the same.  
+**`f_res` : float, optional**  
         Frequency resolution of the calculated spectrum. For example, if
         set to 1, then the directed spectrum will be calculated for
         integer frequency values. If set to 'None' (default), then
         the frequency resolution will be f_samp/nperseg if estimator is
         'Wilson' or f_samp/order if estimator is 'AR' and pairwise is
         False. f_res must be set if estimator is 'AR' and pairwise is
-        True.
-* `return_onesided` : bool, optional  
+        True.  
+**`return_onesided` : bool, optional**  
         If True, return a one-sided spectrum. If False return a
         two-sided spectrum. Must be False if the input timeseries is
-        complex. Defaults to False.
-* `estimator` : {'Wilson', 'AR'}, optional  
+        complex. Defaults to False.  
+**`estimator` : {'Wilson', 'AR'}, optional**  
         Method to use for estimating the directed spectrum. 'Wilson' is
         Wilson's spectral factorization of the data cross-spectral
         density matrix. 'AR' fits an autoregressive model to the data.
-        Defaults to 'Wilson'.
-* `order` : int or 'aic', optional  
+        Defaults to 'Wilson'.  
+**`order` : int or 'aic', optional**  
         Autoregressive model order. If 'aic', used Akaike Information
         Criterion to automatically determine model order. Used only when
-        estimator is 'AR'. Defaults to 'aic'.
-* `max_ord` : int, optional
+        estimator is 'AR'. Defaults to 'aic'.  
+**`max_ord` : int, optional**  
         Maximum autoregressive model order. Only used when estimator is
-        'AR' and order is 'aic'. Default is 50.
-* `ord_est_epochs` : int, optional
+        'AR' and order is 'aic'. Default is 50.  
+**`ord_est_epochs` : int, optional**  
         Number of epochs to sample from full dataset for estimating
         model order. Only used when estimator is 'AR' and order is
         'aic'. The highest AIC value from all sampled epochs is used
-        to select the model order. Default is 20.
-* `max_iter` : int, optional  
+        to select the model order. Default is 20.  
+**`max_iter` : int, optional**  
         Max number of Wilson factorization iterations. If factorization
         does not converge before reaching this value, directed spectrum
         estimates may be inaccurate. Used only when estimator is
-        'Wilson'. No Defaults to 1000.
-* `tol` : float, optional  
+        'Wilson'. No Defaults to 1000.  
+**`tol` : float, optional**  
         Wilson factorization convergence tolerance value. Used only when
-        estimator is 'Wilson'. Defaults to 1e-6.
-* `window` : str or tuple or array_like, optional  
+        estimator is 'Wilson'. Defaults to 1e-6.  
+**`window` : str or tuple or array_like, optional**  
         Desired window to use. If `window` is a string or tuple, it is
         passed to `get_window` to generate the window values, which are
         DFT-even by default. See `get_window` for a list of windows and
         required parameters. If `window` is array_like it will be used
         directly as the window and its length must be nperseg. Defaults
-        to a Hann window.
-* `nperseg` : int, optional  
+        to a Hann window.  
+**`nperseg` : int, optional**  
         Length of each segment. Defaults to None, but if window is str or
         tuple, is set to 256, and if window is array_like, is set to the
-        length of the window.
-* `noverlap`: int, optional  
+        length of the window.  
+**`noverlap`: int, optional**  
         Number of points to overlap between segments. If `None`,
-        ``noverlap = nperseg // 2``. Defaults to `None`.
+        ``noverlap = nperseg // 2``. Defaults to `None`.  
  
  *[Documentation for the `window`, `nperseg`, and `noverlap` variables was
         copied directly from the scipy.signal.spectral module. These
@@ -120,7 +120,7 @@ ds(X, f_samp, groups=None, pairwise=False, f_res=None,
 DirectedSpectrum(ds_array, f, cgroups, params)
 ```
 #### Attributes ####
-* `ds_array` : ndarray, shape (n_windows, n_frequencies, n_groups, n_groups)  
+**`ds_array` : ndarray, shape (n_windows, n_frequencies, n_groups, n_groups)**  
         Directed spectrum values between each pair of channels/groups 
         for each frequency and window. Axis 2 corresponds to the source 
         channel/group and axis 3 corresponds to the target 
@@ -130,14 +130,14 @@ DirectedSpectrum(ds_array, f, cgroups, params)
         explained by any of the other sources in the model. For pairwise 
         directed spectrum, elements for which target and source are the 
         same are not defined and these entries are populated with the 
-        power spectrum for the associated region instead.
-* `f` : ndarray, shape (n_frequencies)  
-        Frequencies associated with axis 1 of ds_array.
-* `groups` : ndarray of strings, shape (n_groups)  
-        Names the channels/groups associated with ds_array.
-* `params` : dictionary
+        power spectrum for the associated region instead.  
+**`f` : ndarray, shape (n_frequencies)**  
+        Frequencies associated with axis 1 of ds_array.  
+**`groups` : ndarray of strings, shape (n_groups)**  
+        Names the channels/groups associated with ds_array.  
+**`params` : dictionary**  
         Contains the parameters that were used to calculate the values in
-        ds_array.
+        ds_array.  
 
 #### Methods ####
 ```python
@@ -147,16 +147,15 @@ Normalize values in ds_array for various use cases.
 
 ##### Parameters #####
 
-`norm_type` : one of {'channels', 'diagonals', 'frequency'} or tuple
+**`norm_type` : one of {'channels', 'diagonals', 'frequency'} or tuple
                 containing a combination of those strings
-                default = ('channels', 'diagonals', 'frequency')
-        
-if 'channels':
+                default = ('channels', 'diagonals', 'frequency')**
+
+    if 'channels':
         Normalizes values within each target channel separately.
         This is typically only appropriate when you expect that
         channels have different amplitudes.
-
-if 'diagonals': 
+    if 'diagonals': 
         Normalizes values with the same source and target channel
         separately from those with different source and target. If
         you are using pairwise DS, it is suggested to use this
@@ -164,9 +163,31 @@ if 'diagonals':
         populated with power spectrum values instead of DS and
         this normalization is required in order for variances to
         be comparable between the two data types.
-
-if 'frequency':
+    if 'frequency':
         Normalizes each values at each frequency separately. This
         is appropriate for something like electrophysiology data,
         where you expect higher frequencies to have lower
         amplitudes, but want them to be weighted equally.
+        
+**`fnorm_method` : one of {None, 'smooth', 'f-inv'}**  
+        Chooses the method to account for high correlation
+        of nearby frequencies. Only used if norm_type
+        contains 'frequency'.
+
+    If 'smooth':
+        A Gaussian smoothing filter is applied to the frequency
+        dimension only for the purposes of calculating
+        normalization constants. Other than this the smoothed data
+        is not used for generating the final result.
+    If 'f-inv':
+        Directed spectrum values are scaled by the corresponding
+        frequency before all other forms of normalization are
+        applied. This assumes that the power spectra for the data
+        initially display '1/f' scaling.
+    If None:
+        No special correction is applied.  
+
+**`filter_sd` : float**  
+        Standard deviation of Gaussian filter applied to frequency
+        dimension, in Hz. Only used if norm_type contains 'frequency'
+        and fnorm_method is 'smooth'.

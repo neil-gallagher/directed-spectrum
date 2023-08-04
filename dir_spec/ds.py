@@ -22,8 +22,8 @@ from scipy.fft import fft, ifft
 from scipy.linalg import lstsq, inv
 from numpy.linalg import cholesky, solve
 from joblib import Parallel, delayed
+from scipy.ndimage import gaussian_filter1d
 
-from pdb import set_trace
 
 class DirectedSpectrum(object):
     """Directed Spectrum object definition.
@@ -65,7 +65,9 @@ class DirectedSpectrum(object):
         if params:
             self.params = params
 
-    def normalize(self, norm_type=('channels', 'diagonals', 'frequency')):
+
+    def normalize(self, norm_type=('channels', 'diagonals', 'frequency'),
+                  fnorm_method='smooth', filter_sd=6.):
         """Normalize values in ds_array for various use cases.
 
         Parameters
@@ -90,6 +92,26 @@ class DirectedSpectrum(object):
                 is appropriate for something like electrophysiology data,
                 where you expect higher frequencies to have lower
                 amplitudes, but want them to be weighted equally.
+        fnorm_method : one of {None, 'smooth', 'f-inv'}
+                       Chooses the method to account for high correlation
+                       of nearby frequencies. Only used if norm_type
+                       contains 'frequency'.
+            If 'smooth':
+                A Gaussian smoothing filter is applied to the frequency
+                dimension only for the purposes of calculating
+                normalization constants. Other than this the smoothed data
+                is not used for generating the final result.
+            If 'f-inv':
+                Directed spectrum values are scaled by the corresponding
+                frequency before all other forms of normalization are
+                applied. This assumes that the power spectra for the data
+                initially display '1/f' scaling.
+            If None:
+                No special correction is applied.
+        filter_sd : float
+            Standard deviation of Gaussian filter applied to frequency
+            dimension, in Hz. Only used if norm_type contains 'frequency'
+            and fnorm_method is 'smooth'.
         """
         if not hasattr(self, 'params'):
             raise AttributeError('normalize method is not defined if the '
@@ -97,6 +119,21 @@ class DirectedSpectrum(object):
         
         # define root mean square function
         rms = lambda arr : np.sqrt(np.mean(arr**2))
+
+        if 'frequency' in norm_type:
+            if fnorm_method == 'f-inv':
+                # normalize by 1/f then remove freq from norm_type
+                norm_fact = self.f[:, np.newaxis, np.newaxis]
+                self.ds_array *= norm_fact
+
+                # normalize variance of whole array
+                self.ds_array /= rms(self.ds_array)
+
+                norm_type = list(norm_type)
+                norm_type.remove('frequency')
+            else:
+                f_res = self.f[1]-self.f[0]
+                sigma = filter_sd/f_res
 
         # get list of indices to normalize together based on norm_type
         n_freqs, n_chans = self.ds_array.shape[-3:-1]
@@ -110,6 +147,11 @@ class DirectedSpectrum(object):
             # normalize diagonals
             diag_idx = np.diag_indices(n_chans)
             diags = self.ds_array[..., diag_idx[0], diag_idx[1]]
+            if ('frequency' in norm_type) and (fnorm_method == 'smooth'):
+                # apply Gaussian kernel to diags
+                diags = gaussian_filter1d(diags, sigma=sigma, axis=1,
+                                          mode='nearest')
+
             for n_mask in norm_list:
                 norm_fact = rms(diags[:, n_mask])
                 diags[:, n_mask] /= norm_fact
@@ -119,6 +161,10 @@ class DirectedSpectrum(object):
             # then normalize to balance w/ diagonals
             pow_spec = self._sum_col(include_diags=False)
             pow_spec /= n_chans - 1
+            if ('frequency' in norm_type) and (fnorm_method == 'smooth'):
+                # apply Gaussian kernel to pow_spec
+                pow_spec = gaussian_filter1d(pow_spec, sigma=sigma, axis=1,
+                                             mode='nearest')
 
             # normalize non-diagonals
             nondiags = self._get_nondiags()
@@ -138,6 +184,12 @@ class DirectedSpectrum(object):
         else:
             # sum columns to estimate power spectrum for each target
             pow_spec = self._sum_col()
+        
+        if ('frequency' in norm_type) and (fnorm_method == 'smooth'):
+            # apply Gaussian kernel to pow_spec
+            pow_spec = gaussian_filter1d(pow_spec, sigma=sigma, axis=1,
+                                         mode='nearest')
+
 
         # loop through each set of indices and normalize
         for n_mask in norm_list:
@@ -165,6 +217,7 @@ class DirectedSpectrum(object):
         nondiags = nondiags.reshape((n_win, n_freqs, n_chans, n_chans-1)
                                    ).transpose(0,1,3,2)
         return nondiags
+
 
     def _split_norm_list(self, norm_list, axis):
         """ Split a list of normalization indices along an axis. """
