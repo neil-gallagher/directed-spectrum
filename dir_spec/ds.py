@@ -117,6 +117,12 @@ class DirectedSpectrum(object):
             raise AttributeError('normalize method is not defined if the '
                                  'params attribute is not set')
         
+        if hasattr(self, 'norm_params'):
+            raise AttributeError(f'This DirectedSpectrum object has already been normalized once and should not be normalized a second time. Previous normalization parameters: {self.norm_params}')
+        self.norm_params = {'norm_type':norm_type,
+                            'fnorm_method':fnorm_method,
+                            'filter_sd':filter_sd}
+        
         # define root mean square function
         rms = lambda arr : np.sqrt(np.mean(arr**2))
 
