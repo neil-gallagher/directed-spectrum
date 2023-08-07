@@ -141,7 +141,8 @@ DirectedSpectrum(ds_array, f, cgroups, params)
 
 #### Methods ####
 ```python
-normalize(norm_type=('channels', 'diagonals', 'frequency'))
+normalize(norm_type=('channels', 'diagonals', 'frequency'),
+          fnorm_method='smooth', filter_sd=6.)
 ```
 Normalize values in ds_array for various use cases.
 
@@ -172,7 +173,7 @@ Normalize values in ds_array for various use cases.
 **`fnorm_method` : one of {None, 'smooth', 'f-inv'}**  
         Chooses the method to account for high correlation
         of nearby frequencies. Only used if norm_type
-        contains 'frequency'.
+        contains 'frequency'. Default is 'smooth'.
 
     If 'smooth':
         A Gaussian smoothing filter is applied to the frequency
@@ -190,4 +191,4 @@ Normalize values in ds_array for various use cases.
 **`filter_sd` : float**  
         Standard deviation of Gaussian filter applied to frequency
         dimension, in Hz. Only used if norm_type contains 'frequency'
-        and fnorm_method is 'smooth'.
+        and fnorm_method is 'smooth'. Default is 6.
