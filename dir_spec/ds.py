@@ -4,14 +4,15 @@ Class
 -----
 DirectedSpectrum : Represents directed spectrum and relevant labels.
 
-Public Function
+Public Functions
 ---------------
 ds : Return a DirectedSpectrum object for multi-channel timeseries data.
+combine_ds : Combine multiple DirectedSpectrum objects into a single object.
 
 Author:  Neil Gallagher
 Modified by:  Billy Carson, Neil Gallagher
-Date written:    8-27-2021
-Last modified:  4-14-2022
+Date written:   08-27-2021
+Last modified:  08-09-2023
 """
 from itertools import combinations
 import warnings
@@ -486,6 +487,57 @@ def ds(X, f_samp, groups=None, pairwise=False, f_res=None,
         f = np.abs(f[:(nyquist+1)])
 
     return DirectedSpectrum(ds_array, f, group_list, param_dict)
+
+
+def combine_ds(ds_list):
+    """Combine multiple DirectedSpectrum objects into a single object.
+    
+    Parameters
+    ----------
+    ds_list : list of DirectedSpectrum objects
+        List of DirectedSpectrum objects to combine.
+    """
+    # check that all ds objects have same groups, frequencies, parameters,
+    # and normalization, if applicable
+    first_ds = ds_list[0]
+    if not all([np.all((ds.groups == first_ds.groups)) for ds in ds_list]):
+        raise ValueError('All DirectedSpectrum objects must have the same '
+                         'groups attribute.')
+    
+    if not all([np.all(ds.f == first_ds.f) for ds in ds_list]):
+        raise ValueError('All DirectedSpectrum objects must have the same '
+                         'frequencies.')
+    
+    has_params = [hasattr(ds, 'params') for ds in ds_list]
+    if any(has_params):
+        # check if any params dictionaries don't match
+        if ((not all(has_params)) or 
+            (not np.all([[np.all(first_ds.params[k] == v)
+                          for k, v in ds.params.items()]
+                          for ds in ds_list]))):
+            raise ValueError('All DirectedSpectrum objects must have been'
+                             ' generated with the same parameters.')
+        
+    has_norm_params = [hasattr(ds, 'norm_params') for ds in ds_list]
+    if any(has_norm_params):
+        if ((not all(has_norm_params)) or
+            (not all([ds.norm_params == first_ds.norm_params
+                      for ds in ds_list]))):
+            raise ValueError('All DirectedSpectrum objects must have been'
+                             ' normalized with the same parameters.')
+
+    # merge ds arrays
+    ds_array = np.concatenate([ds.ds_array for ds in ds_list], axis=0)
+
+    # return new ds object with combined ds array and other attributes
+    if hasattr(first_ds, 'params'):
+        my_ds = DirectedSpectrum(ds_array, first_ds.f, first_ds.groups,
+                                first_ds.params)
+    else:
+        my_ds = DirectedSpectrum(ds_array, first_ds.f, first_ds.groups)
+    if hasattr(first_ds, 'norm_params'):
+        my_ds.norm_params = first_ds.norm_params
+    return my_ds
 
 
 def _wilson_factorize(cpsd, f_samp, max_iter, tol, eps_multiplier=100):

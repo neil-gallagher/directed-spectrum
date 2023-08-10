@@ -1,8 +1,11 @@
 import numpy as np
 from time import process_time
-from dir_spec.ds import ds
+from dir_spec.ds import ds, combine_ds
 import matplotlib.pyplot as plt
 from scipy.ndimage import gaussian_filter1d
+from copy import deepcopy
+
+# from pdb import set_trace
 
 DATA_FILE = 'test_data.npz'
 N_CHANS = 5
@@ -101,6 +104,113 @@ def test_var_pds(plot=False, norm=None, fnorm_method=None, sigma=6.):
         
     if plot:
         _plot_avg_ds(var_ds, title='VAR PDS')
+
+
+def test_combine():
+    """Test combining DS objects."""
+    X, area, fs = _load_data()
+    X1 = X[:50]
+    X2 = X[50:]
+
+    # create two DS objects for tests
+    my_ds1 = ds(X1, fs, area, return_onesided=True, f_res=2.,
+                estimator='AR', max_ord=10)
+    my_ds2 = ds(X2, fs, area, return_onesided=True, f_res=2.,
+                estimator='AR', max_ord=10)
+
+    # test combining two DS objects, for each type of attribute non-matching
+    
+    # frequency non-matching
+    bad_ds = deepcopy(my_ds2)
+    bad_ds.f /= 2
+    try:
+        combine_ds([my_ds1, bad_ds])
+    except ValueError:
+        pass    # expected error
+    else:
+        raise AssertionError('Frequency mismatch between DS objects not '
+                             'detected')
+    
+    # groups non-matching
+    bad_ds = deepcopy(my_ds2)
+    bad_ds.groups = np.roll(bad_ds.groups, 1)
+    try:
+        combine_ds([my_ds1, bad_ds])
+    except ValueError:
+        pass    # expected error
+    else:
+        raise AssertionError('Group mismatch between DS objects not '
+                             'detected')
+    
+    # params non-matching
+    bad_ds = deepcopy(my_ds2)
+    bad_ds.params['estimator'] = 'WSF'
+    try:
+        combine_ds([my_ds1, bad_ds])
+    except ValueError:
+        pass   # expected error
+    else:
+        raise AssertionError('Params mismatch between DS objects not '
+                             'detected')
+    delattr(bad_ds, 'params')
+    try:
+        combine_ds([my_ds1, bad_ds])
+    except ValueError:
+        pass    # expected error
+    else:
+        raise AssertionError('Params mismatch between DS objects not '
+                             'detected')
+    
+    # normalization non-matching
+    bad_ds = deepcopy(my_ds2)
+    try:
+        bad_ds.normalize(('channels',))
+        combine_ds([my_ds1, bad_ds])
+    except ValueError:
+        pass    # expected error
+    else:
+        raise AssertionError('Normalization mismatch between DS objects not '
+                             'detected')
+    
+    norm_ds1 = deepcopy(my_ds1)
+    norm_ds1.normalize(('frequency',))
+    try:
+        combine_ds([norm_ds1, bad_ds])
+    except ValueError:
+        pass    # expected error
+    else:
+        raise AssertionError('Normalization mismatch between DS objects not '
+                             'detected')
+
+    # test combining two DS objects
+    both_ds = combine_ds([my_ds1, my_ds2])
+    _check_combine(my_ds1, my_ds2, both_ds)
+
+    # test combining two DS objects with normalization
+    my_ds1.normalize(('frequency', 'channels'))
+    my_ds2.normalize(('frequency', 'channels'))
+    both_ds = combine_ds([my_ds1, my_ds2])
+    _check_combine(my_ds1, my_ds2, both_ds)
+
+    # test combining two DS objects without params
+    delattr(my_ds1, 'params')
+    delattr(my_ds2, 'params')
+    both_ds = combine_ds([my_ds1, my_ds2])
+    _check_combine(my_ds1, my_ds2, both_ds)
+
+
+def _check_combine(my_ds1, other_ds, both_ds):
+    if hasattr(both_ds, 'params'):
+        assert np.all(my_ds1.params[k] == v
+                      for k, v in both_ds.params.items())
+        
+    assert np.all(both_ds.ds_array == np.concatenate((my_ds1.ds_array,
+                                                      other_ds.ds_array),
+                                                      axis=0))
+    
+    assert np.all(both_ds.groups == my_ds1.groups)
+    assert np.all(both_ds.f == my_ds1.f)
+
 
 def _check_signal_properties(this_ds):
     mean_ds = np.nanmean(this_ds.ds_array, axis=0)
@@ -247,3 +357,4 @@ if __name__ == "__main__":
                  fnorm_method=None)
     test_var_pds(plot=True, norm=('frequency', 'diagonals', 'channels'),
                  fnorm_method='f-inv')
+    test_combine()

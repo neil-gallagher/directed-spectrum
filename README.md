@@ -9,7 +9,7 @@ from sklearn.decomposition import NMF
 directed_spectrum = ds(neural_data, sampling_frequency, channel_names)
 
 # format ds array for NMF
-directed_spectrum.normalize() # useful if different gains between channels
+directed_spectrum.normalize()
 X = directed_spectrum.ds_array
 X = X.reshape((X.shape[0], -1))
 
@@ -28,7 +28,7 @@ If you end up using the directed spectrum in your research, please cite that ref
 The supplementary code for the publication listed above is included in this repository as 'DS_supplemental_code.zip'.
 
 ## Use ##
-This package has one public function: `ds`
+This package has two public functions: `ds` and `combine_ds`
 ```python
 ds(X, f_samp, groups=None, pairwise=False, f_res=None,
        return_onesided=False, estimator='Wilson',
@@ -115,7 +115,7 @@ ds(X, f_samp, groups=None, pairwise=False, f_res=None,
         otherwise.]*
 
 
-### `ds` returns a `DirectedSpectrum` object. ###
+`ds` returns a `DirectedSpectrum` object.
 ```python
 DirectedSpectrum(ds_array, f, cgroups, params)
 ```
@@ -192,3 +192,14 @@ Normalize values in ds_array for various use cases.
         Standard deviation of Gaussian filter applied to frequency
         dimension, in Hz. Only used if norm_type contains 'frequency'
         and fnorm_method is 'smooth'. Default is 6.
+
+---
+The `combine_ds` function is used to combine DirectedSpectrum objects, typically before normalization.
+
+```python
+combine_ds(ds_list)
+```
+##### Parameters #####
+
+**`ds_list` : list of DirectedSpectrum objects**  
+        List of DirectedSpectrum objects to combine.
