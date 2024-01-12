@@ -15,7 +15,7 @@ Date written:   08-27-2021
 Last modified:  08-09-2023
 """
 from itertools import combinations
-import warnings
+import os
 from warnings import warn
 import numpy as np
 from scipy.signal import csd, welch
@@ -380,6 +380,8 @@ def ds(X, f_samp, groups=None, pairwise=False, f_res=None,
     
     estimator = estimator.lower()
     if estimator == 'wilson':
+        # demean data
+        X -= X.mean(axis=-1, keepdims=True)
         cpsd, f = _cpsd_mat(X, f_samp, window, nperseg, noverlap, nfft)
         if not pairwise:
             H, Sigma = _wilson_factorize(cpsd, f_samp, max_iter, tol)
@@ -679,12 +681,12 @@ def _fit_var(X, order, max_ord, ord_est_epochs, n_jobs, print_ord=True):
 
         aic = np.zeros((max_ord, ord_est_epochs))
         max_ord = min(max_ord, n_samps-1)
-        with warnings.catch_warnings():
-            # ignore warnings due to poorly conditioned sample windows
-            warnings.simplefilter("ignore")
-            aic = Parallel(n_jobs=n_jobs)(
-                           delayed(_calc_aic)(o, samp_X, ord_est_epochs)
-                                              for o in range(max_ord))
+        # ignore warnings due to poorly conditioned sample windows
+        os.environ['PYTHONWARNINGS'] = 'ignore:invalid value:RuntimeWarning'
+        aic = Parallel(n_jobs=n_jobs)(
+                        delayed(_calc_aic)(o, samp_X, ord_est_epochs)
+                                            for o in range(max_ord))
+        os.environ['PYTHONWARNINGS'] = 'default'
         aic = np.asarray(aic)
         
         try:
@@ -700,11 +702,12 @@ def _fit_var(X, order, max_ord, ord_est_epochs, n_jobs, print_ord=True):
 
     A, Sigma, bad_epoch = _fit_var_helper(X, order)
     if np.any(bad_epoch):
-        warn('VAR model of data is not stpyable for at least one epoch '
+        warn('VAR model of data is not stable for at least one epoch '
              '(spectral radius > 1); directed spectrum values for these'
-             ' epcohs will be set to NaN. Try preprocssing your data '
-             'differently to increase stationarity, or setting '
-             'pairwise=False.')
+             ' epcohs will be set to NaN. Try changing model order, '
+             'estimating model order with more epochs if using AIC, '
+             'preprocssing your data differently to increase stationarity,'
+             ' or setting pairwise=False.')
 
     return (A, Sigma)
 
@@ -851,6 +854,7 @@ def _cpsd_mat(X, f_samp, window, nperseg, noverlap, nfft):
         Tuple consisting of cross power spectral density matrix and array
         associated frequencies.
     """
+    
     f, cpsd = csd(X[:,:,np.newaxis], X[:,np.newaxis], f_samp, window, nperseg,
                   noverlap, nfft, return_onesided=False,
                   scaling='density')
