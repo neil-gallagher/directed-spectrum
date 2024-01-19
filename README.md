@@ -32,7 +32,7 @@ This package has two public functions: `ds` and `combine_ds`
 ```python
 ds(X, f_samp, groups=None, pairwise=False, f_res=None,
        return_onesided=False, estimator='Wilson',
-       order='aic', max_ord=50, ord_est_epochs=30,
+       order='multi-aic', max_ord=50, ord_est_epochs=30, n_jobs=None,
        max_iter=1000, tol=1e-6, window='hann', nperseg=None, noverlap=None):
 ```
 ##### Parameters #####
@@ -72,9 +72,11 @@ ds(X, f_samp, groups=None, pairwise=False, f_res=None,
         density matrix. 'AR' fits an autoregressive model to the data.
         Defaults to 'Wilson'.  
 **`order` : int or 'aic', optional**  
-        Autoregressive model order. If 'aic', used Akaike Information
-        Criterion to automatically determine model order. Used only when
-        estimator is 'AR'. Defaults to 'aic'.  
+        Autoregressive model order. If 'aic', uses Akaike Information
+        Criterion (AIC) to automatically determine one model order for all
+        epochs. If 'multi-aic', uses AIC to deterimine different model
+        orders for each epoch individually. Used only when estimator is
+        'AR'. Defaults to 'multi-aic'.  
 **`max_ord` : int, optional**  
         Maximum autoregressive model order. Only used when estimator is
         'AR' and order is 'aic'. Default is 50.  
@@ -83,6 +85,13 @@ ds(X, f_samp, groups=None, pairwise=False, f_res=None,
         model order. Only used when estimator is 'AR' and order is
         'aic'. The highest AIC value from all sampled epochs is used
         to select the model order. Default is 20.  
+**`n_jobs` : int, optional**  
+        Maximum number of jobs to use for parallel calculation of AIC.
+        Only used when order is 'aic' or 'multi-aic'. If set to 1,
+        parallel computing is not used. Default is None, which is
+        interpreted as 1 unless the call is performed under a
+        parallel_backend context manager that sets another value for
+        n_jobs.  
 **`max_iter` : int, optional**  
         Max number of Wilson factorization iterations. If factorization
         does not converge before reaching this value, directed spectrum

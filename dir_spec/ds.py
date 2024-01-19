@@ -12,7 +12,7 @@ combine_ds : Combine multiple DirectedSpectrum objects into a single object.
 Author:  Neil Gallagher
 Modified by:  Billy Carson, Neil Gallagher
 Date written:   08-27-2021
-Last modified:  08-09-2023
+Last modified:  01-16-2024
 """
 from itertools import combinations
 import os
@@ -24,7 +24,9 @@ from scipy.linalg import lstsq, inv
 from numpy.linalg import cholesky, solve
 from joblib import Parallel, delayed
 from scipy.ndimage import gaussian_filter1d
+import warnings
 
+# from pdb import set_trace
 
 class DirectedSpectrum(object):
     """Directed Spectrum object definition.
@@ -256,7 +258,7 @@ class DirectedSpectrum(object):
 
 def ds(X, f_samp, groups=None, pairwise=False, f_res=None,
        return_onesided=False, estimator='Wilson',
-       order='aic', max_ord=50, ord_est_epochs=20, n_jobs=None,
+       order='multi-aic', max_ord=50, ord_est_epochs=20, n_jobs=None,
        max_iter=1000, tol=1e-6, window='hann', nperseg=None, noverlap=None):
     """Returns a DirectedSpectrum object calculated from data X.
 
@@ -304,10 +306,12 @@ def ds(X, f_samp, groups=None, pairwise=False, f_res=None,
         Wilson's spectral factorization of the data cross-spectral
         density matrix. 'AR' fits an autoregressive model to the data.
         Defaults to 'Wilson'.
-    order : int or 'aic', optional
+    order : int or 'aic' or 'multi-aic', optional
         Autoregressive model order. If 'aic', uses Akaike Information
-        Criterion to automatically determine model order. Used only when
-        estimator is 'AR'. Defaults to 'aic'.
+        Criterion (AIC) to automatically determine one model order for all
+        epochs. If 'multi-aic', uses AIC to deterimine different model
+        orders for each epoch individually. Used only when estimator is
+        'AR'. Defaults to 'multi-aic'.
     max_ord : int, optional
         Maximum autoregressive model order. Only used when estimaotr is
         'AR' and order is 'aic'. Default is 50.
@@ -318,10 +322,11 @@ def ds(X, f_samp, groups=None, pairwise=False, f_res=None,
         to select the model order. Default is 20.
     n_jobs : int, optional
         Maximum number of jobs to use for parallel calculation of AIC.
-        Only used when order is 'aic'. If set to 1, parallel computing
-        is not used. Default is None, which is interpreted as 1 unless
-        the call is performed under a parallel_backend context manager
-        that sets another value for n_jobs.
+        Only used when order is 'aic' or 'multi-aic'. If set to 1,
+        parallel computing is not used. Default is None, which is
+        interpreted as 1 unless the call is performed under a
+        parallel_backend context manager that sets another value for
+        n_jobs.
     max_iter : int, optional
         Max number of Wilson factorization iterations. If factorization
         does not converge before reaching this value, directed spectrum
@@ -377,8 +382,12 @@ def ds(X, f_samp, groups=None, pairwise=False, f_res=None,
     group_pairs = combinations(range(G), 2)
     
     nfft, nperseg = _calc_nfft(f_samp, f_res, nperseg, window)
-    
+
     estimator = estimator.lower()
+    if (estimator == 'ar') and (order == 'multi-aic') and (not nfft):
+        raise ValueError('f_res must be set if estimator is \'AR\' and '
+                         'order is \'multi-aic\'')
+    
     if estimator == 'wilson':
         # demean data
         X -= X.mean(axis=-1, keepdims=True)
@@ -388,7 +397,7 @@ def ds(X, f_samp, groups=None, pairwise=False, f_res=None,
     elif estimator == 'ar':
         if not pairwise:
             A, Sigma = _fit_var(X, order, max_ord, ord_est_epochs, n_jobs)
-            H = _var_to_transfer(A, nfft)       
+            H = _var_to_transfer(A, nfft)
     else:
         raise ValueError(f'Unsupported value for parameter \'estimator\':'
                          f' {estimator}')
@@ -639,8 +648,8 @@ def _fit_var(X, order, max_ord, ord_est_epochs, n_jobs, print_ord=True):
         given epoch.
     order : int, optional
         Autoregressive model order (i.e. number of lags). If set to
-        'aic', then order is chosen automatically using Akaike
-        information criterion on a small subset of the data.
+        'aic' or 'multi-aic', then order is chosen automatically using
+        Akaike information criterion on a small subset of the data.
     max_ord : int, optional
         Maximum autoregressive model order. Only used when order is
         'aic'. Default is 50.
@@ -668,11 +677,11 @@ def _fit_var(X, order, max_ord, ord_est_epochs, n_jobs, print_ord=True):
     # demean data
     X -= X.mean(axis=-1, keepdims=True)
 
-    if order == 'aic':
-        # estimate model order
-        # (use a subset of the data for efficiency)
+    if order in ('aic', 'multi-aic'):
+        # estimate model order using AIC
         rng = np.random.default_rng()
-        if ord_est_epochs < X.shape[0]:
+        if (order == 'aic')  and (ord_est_epochs < X.shape[0]):
+            # use a subset of the data for estimating model order
             samp_X = rng.choice(X, ord_est_epochs, replace=False)
         else:
             ord_est_epochs = X.shape[0]
@@ -683,31 +692,48 @@ def _fit_var(X, order, max_ord, ord_est_epochs, n_jobs, print_ord=True):
         max_ord = min(max_ord, n_samps-1)
         # ignore warnings due to poorly conditioned sample windows
         os.environ['PYTHONWARNINGS'] = 'ignore:invalid value:RuntimeWarning'
-        aic = Parallel(n_jobs=n_jobs)(
-                        delayed(_calc_aic)(o, samp_X, ord_est_epochs)
-                                            for o in range(max_ord))
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            aic_A_Sig = Parallel(n_jobs=n_jobs)(
+                            delayed(_calc_aic)(o, samp_X, ord_est_epochs)
+                                                for o in range(max_ord))
         os.environ['PYTHONWARNINGS'] = 'default'
+        # split aic, A, and Sigma into separate lists
+        aic, A, Sigma = zip(*aic_A_Sig)
         aic = np.asarray(aic)
-        
-        try:
-            order = np.nanargmin(aic.max(axis=1)) + 1
-        except ValueError:
-            print('Could not find an AR model order that produced '
-                  'consistently stable (spectral radius > 1) models. '
-                  'Try preprocssing your data differently to increase '
-                  'stationarity, or setting pairwise=False.')
-            raise
-        if print_ord:
-            print(f'Model order {order:d} selected using AIC.')
 
-    A, Sigma, bad_epoch = _fit_var_helper(X, order)
-    if np.any(bad_epoch):
-        warn('VAR model of data is not stable for at least one epoch '
-             '(spectral radius > 1); directed spectrum values for these'
-             ' epcohs will be set to NaN. Try changing model order, '
-             'estimating model order with more epochs if using AIC, '
-             'preprocssing your data differently to increase stationarity,'
-             ' or setting pairwise=False.')
+        if order == 'aic':
+            try:
+                order = np.nanargmin(aic.max(axis=1)) + 1
+            except ValueError:
+                print('Could not find an AR model order that produced '
+                    'consistently stable (spectral radius > 1) models. '
+                    'Try preprocssing your data differently to increase '
+                    'stationarity, or setting pairwise=False.')
+                raise
+            if print_ord:
+                print(f'Model order {order:d} selected using AIC.')
+        else:
+            order = np.nanargmin(aic, axis=0) + 1
+            if print_ord:
+                print(f'Model orders range between {order.min():d} and '
+                      f'{order.max():d}, with a mean of {order.mean():.1f}'
+                      ' using AIC.')
+
+    if np.isscalar(order):
+        # fit final VAR models for non multi-aic case
+        A, Sigma, bad_epoch = _fit_var_helper(X, order)
+        if np.any(bad_epoch):
+            warn('VAR model of data is not stable for at least one epoch '
+                '(spectral radius > 1); directed spectrum values for these'
+                ' epcohs will be set to NaN. Try changing model order, '
+                'estimating model order with more epochs if using AIC, '
+                'preprocssing your data differently to increase stationarity,'
+                ' or setting pairwise=False.')
+    else:
+        # select correct A and Sigma values for multi-aic case
+        A = [A[o-1][e] for e,o in enumerate(order)]
+        Sigma = np.asarray([Sigma[o-1][e] for e,o in enumerate(order)])
 
     return (A, Sigma)
 
@@ -723,7 +749,7 @@ def _calc_aic(o, samp_X, ord_est_epochs):
     # if sign is 0, Sigma is singular, so model is unstable
     logdetsig[sign==0] = np.nan
     aic = logdetsig + 2*n_params/(n_obs-n_params-1)
-    return aic
+    return (aic, A, Sigma)
 
 
 def _var_to_transfer(A, nfft):
@@ -731,9 +757,12 @@ def _var_to_transfer(A, nfft):
 
     Parameters
     ----------
-    A : numpy.ndarray
-        shape (n_epochs, n_lags, n_signals, n_signals)
-        Autoregressive matrices of the VAR model for each epoch.
+    A : numpy.ndarray -or- list of numpy.ndarrays
+        shape (n_epochs, n_lags, n_signals, n_signals) -or- len (n_epochs)
+        Autoregressive matrices of the VAR model for each epoch. If a list
+        of numpy.ndarrays is passed, then each element of the list should
+        be a numpy.ndarray of shape (n_lags_i, n_signals, n_signals), where
+        n_lags_i is the number of lags (i.e. order) for the ith epoch.
     nfft: int, optional
         Length of the FFT used, if a zero padded FFT is desired.
 
@@ -743,19 +772,27 @@ def _var_to_transfer(A, nfft):
         shape (n_windows, n_frequencies, n_groups, n_groups)
         VAR solutions for transfer matrix.
     """
-    id_mat = np.broadcast_to(np.eye(A.shape[-1]),
-                             (A.shape[0], 1, A.shape[2], A.shape[3]))
-    ia = np.concatenate((id_mat, -A), axis=1)
-    iaf = fft(ia, nfft, axis=1)
+    n_epochs = len(A)
+    if nfft:
+        n_freqs = nfft
+    else:
+        n_freqs = A[0].shape[0] + 1
+    n_chans = A[0].shape[-1]
+    H = np.zeros((n_epochs, n_freqs, n_chans, n_chans), dtype=np.complex128)
+    id_mat = np.eye(n_chans)[np.newaxis,...]
 
-    # invert iaf to get H, checking for nans in iaf
-    H = np.zeros_like(iaf)
-    for k in range(iaf.shape[0]):
-        for l in range(iaf.shape[1]):
-            if np.any(np.isnan(iaf[k,l])):
-                H[k,l] = np.nan
+    # calc transfer matrix individually for each epoch
+    for e, A_e in enumerate(A):
+        # concatenate I and -A along order/lag axis, then take FFT
+        ia = np.concatenate((id_mat, -A_e), axis=0)
+        iaf = fft(ia, nfft, axis=0)
+
+        for l, iaf_l in enumerate(iaf):
+            # check for nan values in iaf before invert
+            if np.any(np.isnan(iaf_l)):
+                H[e,l] = np.nan
             else:
-                H[k,l] = inv(iaf[k,l], check_finite=False, overwrite_a=True)
+                H[e,l] = inv(iaf_l, check_finite=False, overwrite_a=True)
     return H
 
 
