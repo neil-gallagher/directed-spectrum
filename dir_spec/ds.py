@@ -26,7 +26,6 @@ from joblib import Parallel, delayed
 from scipy.ndimage import gaussian_filter1d
 import warnings
 
-# from pdb import set_trace
 
 class DirectedSpectrum(object):
     """Directed Spectrum object definition.
@@ -71,7 +70,8 @@ class DirectedSpectrum(object):
 
     def normalize(self, norm_type=('channels', 'diagonals', 'frequency'),
                   fnorm_method='smooth', filter_sd=6.):
-        """Normalize values in ds_array for various use cases.
+        """Normalize values in ds_array for various use cases. NaN values 
+            in ds_array will be ignored.
 
         Parameters
         ----------
@@ -127,7 +127,7 @@ class DirectedSpectrum(object):
                             'filter_sd':filter_sd}
         
         # define root mean square function
-        rms = lambda arr : np.sqrt(np.mean(arr**2))
+        rms = lambda arr : np.sqrt(np.nanmean(arr**2))
 
         if 'frequency' in norm_type:
             if fnorm_method == 'f-inv':
@@ -140,9 +140,12 @@ class DirectedSpectrum(object):
 
                 norm_type = list(norm_type)
                 norm_type.remove('frequency')
-            else:
+            elif fnorm_method == 'smooth':
                 f_res = self.f[1]-self.f[0]
                 sigma = filter_sd/f_res
+            else:
+                raise ValueError('fnorm_method must be one of {None, '
+                                 '\'smooth\', \'f-inv\'')
 
         # get list of indices to normalize together based on norm_type
         n_freqs, n_chans = self.ds_array.shape[-3:-1]
@@ -446,10 +449,12 @@ def ds(X, f_samp, groups=None, pairwise=False, f_res=None,
 
         # Average across channels within group.
         # TODO: allow for other options besides average here.
-        ds_array[:,:, gp[0], gp[1]] = \
-            np.diagonal(ds01, axis1=-2, axis2=-1).mean(axis=-1)
-        ds_array[:,:, gp[1], gp[0]] = \
-            np.diagonal(ds10, axis1=-2, axis2=-1).mean(axis=-1)
+        ds_array[:,:, gp[0], gp[1]] = np.nanmean( 
+                                        np.diagonal(ds01, axis1=-2, axis2=-1),
+                                        axis=-1)
+        ds_array[:,:, gp[1], gp[0]] = np.nanmean(
+                                        np.diagonal(ds10, axis1=-2, axis2=-1),
+                                        axis=-1)
 
     if pairwise:
         # fill in elements where source equals target with power spectrum
@@ -714,7 +719,22 @@ def _fit_var(X, order, max_ord, ord_est_epochs, n_jobs, print_ord=True):
             if print_ord:
                 print(f'Model order {order:d} selected using AIC.')
         else:
-            order = np.nanargmin(aic, axis=0) + 1
+            try:
+                order = np.nanargmin(aic, axis=0) + 1
+                bad_epoch = False
+            except ValueError:
+                warn('VAR model of data is not stable for at least one epoch '
+                '(spectral radius > 1); directed spectrum values for these'
+                ' epcohs will be set to NaN. Try changing max model order, '
+                'estimating model order with more epochs, '
+                'preprocssing your data differently to increase stationarity,'
+                ' or setting pairwise=False.')
+                bad_epoch = np.where(np.isnan(aic).all(axis=0))[0]
+                aic = np.delete(aic, bad_epoch, axis=1)
+                order = np.nanargmin(aic, axis=0) + 1
+                for be in bad_epoch:
+                    order = np.insert(order, be, 1)
+                
             if print_ord:
                 print(f'Model orders range between {order.min():d} and '
                       f'{order.max():d}, with a mean of {order.mean():.1f}'
