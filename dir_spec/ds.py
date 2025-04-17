@@ -143,7 +143,7 @@ class DirectedSpectrum(object):
             elif fnorm_method == 'smooth':
                 f_res = self.f[1]-self.f[0]
                 sigma = filter_sd/f_res
-            else:
+            elif fnorm_method is not None:
                 raise ValueError('fnorm_method must be one of {None, '
                                  '\'smooth\', \'f-inv\'')
 
